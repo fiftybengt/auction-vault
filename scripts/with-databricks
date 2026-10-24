@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Run a command with Databricks credentials from the GNOME keyring in its environment.
+#   scripts/with-databricks dbt build
+#   scripts/with-databricks python ingest/upload.py ...
+# The variables exist only for that process; nothing is written to disk.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+DATABRICKS_HOST="$(/usr/bin/python3 "$here/dbx_secret.py" get host)"
+DATABRICKS_TOKEN="$(/usr/bin/python3 "$here/dbx_secret.py" get token)"
+# Not secret: the Free Edition "Serverless Starter Warehouse" (2X-Small).
+DATABRICKS_HTTP_PATH="${DATABRICKS_HTTP_PATH:-/sql/1.0/warehouses/7655e13e54222e5a}"
+export DATABRICKS_HOST DATABRICKS_TOKEN DATABRICKS_HTTP_PATH
+
+exec "$@"

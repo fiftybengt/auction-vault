@@ -1,0 +1,15 @@
+## Interface: 30300
+## Title: AuctionVault
+## Version: 0.1.0
+## Author: adam
+## Notes: Passive full-fidelity auction house harvester. Records every individual listing to SavedVariables for offline analysis.
+## SavedVariables: AUCTIONVAULT_META, AUCTIONVAULT_CONFIG, AUCTIONVAULT_ITEMS, AUCTIONVAULT_SCANS, AUCTIONVAULT_DIAG
+
+Compat.lua
+Core.lua
+Diag.lua
+Store.lua
+ItemCache.lua
+Session.lua
+Harvest.lua
+Commands.lua

@@ -1,0 +1,32 @@
+# locally built Lua 5.1 toolchain (make test rebuilds it)
+.tools/
+
+# generated sample SavedVariables
+build/
+
+# later steps
+data/*.duckdb
+__pycache__/
+*.pyc
+.venv/
+
+# third-party reference code, not ours to publish
+resource_maybe_worth_checking/
+
+# raw SavedVariables archive -- local only
+data/raw/
+*.lua.bak
+
+# dbt
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+profiles.yml
+.env
+
+# site
+node_modules/
+site/dist/
+
+# local session pointer
+claude_session_ah
