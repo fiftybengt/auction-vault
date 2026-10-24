@@ -5,7 +5,9 @@
 #   make install   symlink the addon into the WoW client
 #   make status    show what the live client has captured so far
 #   make publish   archive + parse the live SavedVariables and upload it to Databricks
+#                  and start the GitHub Actions build (dbt -> export -> site -> Pages)
 #                  (make publish-dry: same, but upload nothing; make ingest-test: pytest)
+#   make site-dev  write the fixture data and start the Vite dev server
 
 LUA_VERSION := 5.1.5
 TOOLS       := .tools
@@ -25,7 +27,10 @@ INGEST_VENV := ingest/.venv
 PY          := $(INGEST_VENV)/bin/python
 INGEST_DEPS := $(INGEST_VENV)/.installed
 
-.PHONY: all test check sample install uninstall status clean publish publish-dry ingest-test
+# GitHub repo whose build-deploy workflow `make publish` starts.
+GH_REPO     ?= fiftybengt/auction-vault
+
+.PHONY: all test check sample install uninstall status clean publish publish-dry ingest-test site-dev
 
 all: test
 
@@ -88,13 +93,28 @@ ingest-test: $(INGEST_DEPS)
 
 # Archives first (data/raw/), skips files already uploaded, then uploads the C2 landing
 # directory. Credentials come from the GNOME keyring via scripts/with-databricks.
+# Then starts the CI build (dbt build -> export -> site -> Pages) if gh and the repo are there;
+# otherwise it only prints a hint, since the upload itself has already succeeded.
 publish: $(INGEST_DEPS)
 	@scripts/with-databricks $(PY) -m ingest publish --sv "$(SAVED_VARS)"
-	@# TODO(devops-engineer): trigger the warehouse build here, e.g.
-	@#   gh workflow run build-deploy
+	@if ! command -v gh >/dev/null 2>&1; then \
+		echo "gh not installed: start the build at https://github.com/$(GH_REPO)/actions/workflows/build-deploy.yml"; \
+	elif ! gh repo view "$(GH_REPO)" >/dev/null 2>&1; then \
+		echo "repo $(GH_REPO) not reachable (not created yet, or gh not logged in): skipping the site build"; \
+	else \
+		gh workflow run build-deploy.yml -R "$(GH_REPO)" && \
+		echo "started build-deploy on $(GH_REPO): gh run watch -R $(GH_REPO)"; \
+	fi
 
 publish-dry: $(INGEST_DEPS)
 	@$(PY) -m ingest publish --dry-run --sv "$(SAVED_VARS)"
+
+# ---------------------------------------------------------------- site
+
+# Fixture data only (site/public/data/ is gitignored); the real data comes from export/.
+site-dev:
+	@test -d site/node_modules || (cd site && npm ci)
+	@cd site && npm run fixture && npm run dev
 
 clean:
 	rm -rf $(BUILD)
