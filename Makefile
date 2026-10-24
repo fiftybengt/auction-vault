@@ -69,7 +69,6 @@ install:
 	@rm -f "$(ADDON_DIR)"
 	@ln -s "$(CURDIR)/addon/AuctionVault" "$(ADDON_DIR)"
 	@echo "linked $(ADDON_DIR) -> $(CURDIR)/addon/AuctionVault"
-	@echo "Ace3 present: $$(test -d '$(WOW_DIR)/Interface/AddOns/Ace3' && echo yes || echo NO -- required)"
 
 uninstall:
 	@test -L "$(ADDON_DIR)" && rm -f "$(ADDON_DIR)" && echo "unlinked" || echo "not a symlink, nothing done"

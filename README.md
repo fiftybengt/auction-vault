@@ -19,7 +19,7 @@ addon ──> ingest ──> Databricks (dbt) ──> export ──> site
 | `export/` | Gold tables → static JSON for the site |
 | `site/` | Vite + React + Tailwind + uPlot |
 
-Data formats between stages: [docs/contracts.md](docs/contracts.md).
+Data formats between stages: [docs/contracts.md](docs/contracts.md). Operating and troubleshooting: [docs/runbook.md](docs/runbook.md).
 
 ## Updating the data
 
