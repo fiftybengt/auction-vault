@@ -1,0 +1,5 @@
+# dbt/.venv  (python3 -m venv dbt/.venv && dbt/.venv/bin/pip install -r dbt/requirements.txt)
+# Also serves export/export_gold.py (databricks-sql-connector comes with dbt-databricks).
+dbt-core==1.11.8
+dbt-databricks==1.11.8
+databricks-sql-connector==4.1.5

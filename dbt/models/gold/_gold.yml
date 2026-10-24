@@ -1,0 +1,73 @@
+version: 2
+
+models:
+  - name: item_scan_stats
+    description: "market x scan x item_key over ALL scans; `complete` and `coverage` flag partial scans. Trends must filter complete = true. Buyout stats exclude bid-only listings."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, scan_id, item_key]}}
+    columns:
+      - name: realm
+        data_tests: [not_null]
+      - name: faction
+        data_tests: [not_null]
+      - name: scan_id
+        data_tests: [not_null]
+      - name: item_key
+        data_tests: [not_null]
+      - name: complete
+        data_tests: [not_null]
+      - name: listings
+        description: "All listings, bid-only included."
+      - name: quantity
+        description: "Sum of stack sizes."
+      - name: median_unit
+        description: "Exact median of unit_buyout, rounded to copper."
+      - name: bid_only
+        description: "Listings with no buyout."
+
+  - name: market_overview
+    description: "market x scan over ALL scans, with complete and coverage (row_count / expected_total)."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, scan_id]}}
+    columns:
+      - name: scan_id
+        data_tests: [not_null]
+      - name: complete
+        data_tests: [not_null]
+
+  - name: item_daily
+    description: "market x UTC day x item_key: the measures of that day's latest complete scan. Complete scans only."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, day, item_key]}}
+    columns:
+      - name: day
+        data_tests: [not_null]
+      - name: item_key
+        data_tests: [not_null]
+
+  - name: latest_scan
+    description: "The newest complete scan per market. Empty until the first complete scan exists."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction]}}
+
+  - name: latest_listings
+    description: "market x listing in the newest complete scan."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, scan_id, row_no]}}
+    columns:
+      - name: time_left
+        data_tests:
+          - accepted_values: {arguments: {values: [1, 2, 3, 4], quote: false}}
+
+  - name: movers
+    description: "market x item_key: median now (newest complete scan) vs ~1d and ~7d ago. pct_* null unless both ends have >= movers_min_listings listings."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, item_key]}}
+
+  - name: seller_summary
+    description: "market x named seller in the newest complete scan: listings, distinct items, est. value at buyout."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, seller]}}
+    columns:
+      - name: seller
+        data_tests: [not_null]

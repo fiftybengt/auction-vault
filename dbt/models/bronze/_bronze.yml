@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: bronze_upload
+    description: "C2 upload.parquet, one row per landing directory. Its presence marks a directory as complete; all other bronze tables load only directories listed here. Append-only."
+    data_tests:
+      - unique_key: {arguments: {columns: [_source_dir]}}
+    columns:
+      - name: _source_dir
+        description: "Landing directory name (<upload_ts>)."
+        data_tests: [not_null]
+      - name: upload_ts
+        data_tests: [not_null]
+      - name: _ingested_at
+        description: "When dbt appended the row."
+
+  - name: bronze_scans
+    description: "C2 scans.parquet, append-only, one row per scan per upload (a scan repeats across uploads)."
+    data_tests:
+      - unique_key: {arguments: {columns: [_source_dir, scan_id]}}
+    columns:
+      - name: scan_id
+        data_tests: [not_null]
+      - name: _source_dir
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('bronze_upload'), field: _source_dir}}
+
+  - name: bronze_listings
+    description: "C2 listings.parquet, append-only."
+    data_tests:
+      - unique_key: {arguments: {columns: [_source_dir, scan_id, row_no]}}
+    columns:
+      - name: _source_dir
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('bronze_upload'), field: _source_dir}}
+
+  - name: bronze_items
+    description: "C2 items.parquet, append-only; each upload carries the whole item dimension."
+    data_tests:
+      - unique_key: {arguments: {columns: [_source_dir, item_key]}}
+    columns:
+      - name: _source_dir
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('bronze_upload'), field: _source_dir}}

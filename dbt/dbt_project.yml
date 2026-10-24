@@ -1,0 +1,43 @@
+name: auctionvault
+version: "1.0.0"
+config-version: 2
+profile: auctionvault
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: target
+clean-targets: [target, dbt_packages]
+
+vars:
+  # C2: landing directories live directly under this volume path.
+  landing_path: /Volumes/auction/raw/landing
+  # movers: both ends of a comparison need at least this many listings.
+  movers_min_listings: 3
+
+models:
+  auctionvault:
+    +file_format: delta
+    bronze:
+      +schema: bronze
+      +materialized: incremental
+      +incremental_strategy: append
+    silver:
+      +schema: silver
+      +materialized: table
+    gold:
+      +schema: gold
+      +materialized: table
+
+seeds:
+  auctionvault:
+    +schema: silver
+    dbc_item_class:
+      +column_types: {class_id: int, class_name: string}
+    dbc_item_subclass:
+      +column_types: {class_id: int, subclass_id: int, subclass_name: string, subclass_plural: string}
+
+data_tests:
+  auctionvault:
+    +severity: error

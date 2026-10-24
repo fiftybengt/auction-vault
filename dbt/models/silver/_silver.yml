@@ -1,0 +1,88 @@
+version: 2
+
+seeds:
+  - name: dbc_item_class
+    description: "ItemClass.dbc (3.3.5a), trimmed to id and name."
+    columns:
+      - name: class_id
+        data_tests: [unique, not_null]
+  - name: dbc_item_subclass
+    description: "ItemSubClass.dbc (3.3.5a), trimmed to ids, name and plural (verbose) name."
+    data_tests:
+      - unique_key: {arguments: {columns: [class_id, subclass_id]}}
+
+models:
+  - name: silver_scans
+    description: "One row per scan_id: the bronze copy with the highest row_count (newest upload on a tie)."
+    columns:
+      - name: scan_id
+        data_tests: [unique, not_null]
+      - name: realm
+        data_tests: [not_null]
+      - name: faction
+        data_tests: [not_null]
+      - name: started_at
+        data_tests: [not_null]
+      - name: complete
+        description: "False for every scan before the 2026-10-24 harvest fix (a prefix of the AH)."
+        data_tests: [not_null]
+      - name: coverage
+        description: "row_count / expected_total (null when expected_total is 0)."
+      - name: copies
+        description: "How many uploads carried this scan."
+      - name: _source_dir
+        description: "Landing directory of the kept copy."
+        data_tests: [not_null]
+
+  - name: silver_listings
+    description: "Listings of the kept copy of each scan. buyout 0 (bid-only) becomes null; unit prices are integer copper per unit."
+    data_tests:
+      - unique_key: {arguments: {columns: [scan_id, row_no]}}
+    columns:
+      - name: scan_id
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('silver_scans'), field: scan_id}}
+      - name: row_no
+        data_tests: [not_null]
+      - name: realm
+        data_tests: [not_null]
+      - name: faction
+        data_tests: [not_null]
+      - name: item_key
+        data_tests: [not_null]
+      - name: stack_count
+        data_tests: [not_null]
+      - name: time_left
+        data_tests:
+          - not_null
+          - accepted_values: {arguments: {values: [1, 2, 3, 4], quote: false}}
+      - name: buyout
+        description: "Null when bid-only."
+      - name: unit_buyout
+        description: "round(buyout / stack_count); null when bid-only."
+      - name: unit_min_bid
+        description: "round(min_bid / stack_count)."
+      - name: seller
+        description: "Null when the server sent no name."
+
+  - name: silver_items
+    description: "Item dimension, latest upload wins. Empty strings become null. class_id/subclass_id resolved from the DBC seeds by name."
+    columns:
+      - name: item_key
+        data_tests: [unique, not_null]
+      - name: item_id
+        data_tests: [not_null]
+
+  - name: item_classes
+    description: "ItemClass x ItemSubClass. display_name matches the subtype string GetItemInfo() returns."
+    data_tests:
+      - unique_key: {arguments: {columns: [class_id, subclass_id]}}
+
+  - name: silver_sellers
+    description: "Named sellers per market over all scans."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, seller]}}
+    columns:
+      - name: seller
+        data_tests: [not_null]

@@ -4,6 +4,8 @@
 #   make sample    generate a realistic SavedVariables file and verify the format contract
 #   make install   symlink the addon into the WoW client
 #   make status    show what the live client has captured so far
+#   make publish   archive + parse the live SavedVariables and upload it to Databricks
+#                  (make publish-dry: same, but upload nothing; make ingest-test: pytest)
 
 LUA_VERSION := 5.1.5
 TOOLS       := .tools
@@ -18,7 +20,12 @@ SAVED_VARS  := $(WOW_DIR)/WTF/Account/$(WOW_ACCOUNT)/SavedVariables/AuctionVault
 
 BUILD       := build
 
-.PHONY: all test check sample install uninstall status clean
+# Python ingest (ingest/): its own venv, created on first use.
+INGEST_VENV := ingest/.venv
+PY          := $(INGEST_VENV)/bin/python
+INGEST_DEPS := $(INGEST_VENV)/.installed
+
+.PHONY: all test check sample install uninstall status clean publish publish-dry ingest-test
 
 all: test
 
@@ -67,6 +74,27 @@ status:
 	@test -f "$(SAVED_VARS)" || { echo "no scans yet at $(SAVED_VARS)"; exit 1; }
 	@ls -lh "$(SAVED_VARS)"
 	@python3 addon/test/verify_format.py "$(SAVED_VARS)"
+
+# ---------------------------------------------------------------- ingest
+
+$(INGEST_DEPS): ingest/pyproject.toml
+	python3 -m venv $(INGEST_VENV)
+	$(PY) -m pip install -q --upgrade pip
+	$(PY) -m pip install -q "pyarrow>=15" "databricks-sdk>=0.30" "pytest>=7"
+	@touch $@
+
+ingest-test: $(INGEST_DEPS)
+	@cd ingest && .venv/bin/python -m pytest -q
+
+# Archives first (data/raw/), skips files already uploaded, then uploads the C2 landing
+# directory. Credentials come from the GNOME keyring via scripts/with-databricks.
+publish: $(INGEST_DEPS)
+	@scripts/with-databricks $(PY) -m ingest publish --sv "$(SAVED_VARS)"
+	@# TODO(devops-engineer): trigger the warehouse build here, e.g.
+	@#   gh workflow run build-deploy
+
+publish-dry: $(INGEST_DEPS)
+	@$(PY) -m ingest publish --dry-run --sv "$(SAVED_VARS)"
 
 clean:
 	rm -rf $(BUILD)

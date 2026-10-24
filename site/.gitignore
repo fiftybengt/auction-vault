@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# generated data: the warehouse export (C4) or `npm run fixture`
+public/data/*
+!public/data/README.md

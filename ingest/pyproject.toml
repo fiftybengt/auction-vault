@@ -1,0 +1,21 @@
+[project]
+name = "auctionvault-ingest"
+version = "1.0.0"
+description = "AuctionVault SavedVariables -> C2 landing Parquet -> Databricks volume"
+requires-python = ">=3.10"
+dependencies = [
+    "pyarrow>=15",
+    "databricks-sdk>=0.30",
+]
+
+[dependency-groups]
+dev = ["pytest>=7"]
+
+[tool.uv]
+# ingest/ is run in place as `python -m ingest` from the repo root, not installed.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Repo root on sys.path so tests can `import ingest`.
+pythonpath = [".."]

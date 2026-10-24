@@ -1,0 +1,164 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens. Light is the default; dark is a selected set of steps (not an automatic flip),
+ * applied for the OS setting unless the viewer picked light, and always when they picked dark.
+ * Chart series colours come from the dataviz reference palette (slot 1 blue, slot 2 orange),
+ * validated with validate_palette.js against both surfaces.
+ */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f0efec;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-muted: #6f6d68;
+  --hairline: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --accent: #1c5cab;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --band-1: rgba(42, 120, 214, 0.16);
+  --wash-1: rgba(42, 120, 214, 0.1);
+  --warning: #fab219;
+  --warning-ink: #7a5200;
+  --critical: #d03b3b;
+  --up-ink: #006300;
+  --down-ink: #b02a2a;
+  --gold: #8a6d00;
+  --silver: #5f6670;
+  --copper: #9a5428;
+
+  /* WoW item quality, stepped for >= 4.5:1 on the light surface */
+  --q-poor: #6b6b68;
+  --q-common: #2b2b29;
+  --q-uncommon: #1a7a00;
+  --q-rare: #0062c2;
+  --q-epic: #8a2bd6;
+  --q-legendary: #b05300;
+  --q-artifact: #7a6630;
+  --q-heirloom: #7a6630;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #242423;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --ink-muted: #9a9890;
+    --hairline: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --accent: #6da7ec;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --band-1: rgba(57, 135, 229, 0.22);
+    --wash-1: rgba(57, 135, 229, 0.12);
+    --warning-ink: #fab219;
+    --up-ink: #0ca30c;
+    --down-ink: #e66767;
+    --gold: #e6c34a;
+    --silver: #c4c9d0;
+    --copper: #d98a55;
+    --q-poor: #9d9d9d;
+    --q-common: #f0efec;
+    --q-uncommon: #1eff00;
+    --q-rare: #3d9bff;
+    --q-epic: #b770f5;
+    --q-legendary: #ff8000;
+    --q-artifact: #e6cc80;
+    --q-heirloom: #e6cc80;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #242423;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --ink-muted: #9a9890;
+  --hairline: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.1);
+  --accent: #6da7ec;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --band-1: rgba(57, 135, 229, 0.22);
+  --wash-1: rgba(57, 135, 229, 0.12);
+  --warning-ink: #fab219;
+  --up-ink: #0ca30c;
+  --down-ink: #e66767;
+  --gold: #e6c34a;
+  --silver: #c4c9d0;
+  --copper: #d98a55;
+  --q-poor: #9d9d9d;
+  --q-common: #f0efec;
+  --q-uncommon: #1eff00;
+  --q-rare: #3d9bff;
+  --q-epic: #b770f5;
+  --q-legendary: #ff8000;
+  --q-artifact: #e6cc80;
+  --q-heirloom: #e6cc80;
+}
+
+@theme inline {
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--ink-muted);
+  --color-hairline: var(--hairline);
+  --color-line: var(--border);
+  --color-accent: var(--accent);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-warning: var(--warning);
+  --color-warning-ink: var(--warning-ink);
+  --color-critical: var(--critical);
+  --color-up: var(--up-ink);
+  --color-down: var(--down-ink);
+  --color-gold: var(--gold);
+  --color-silver: var(--silver);
+  --color-copper: var(--copper);
+  --color-q0: var(--q-poor);
+  --color-q1: var(--q-common);
+  --color-q2: var(--q-uncommon);
+  --color-q3: var(--q-rare);
+  --color-q4: var(--q-epic);
+  --color-q5: var(--q-legendary);
+  --color-q6: var(--q-artifact);
+  --color-q7: var(--q-heirloom);
+}
+
+html {
+  background: var(--page);
+  color: var(--ink);
+}
+body {
+  margin: 0;
+  background: var(--page);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* uPlot: keep its chrome recessive and theme-aware */
+.uplot,
+.uplot * {
+  font-family: var(--font-sans);
+}
+.u-select {
+  background: var(--wash-1);
+}
