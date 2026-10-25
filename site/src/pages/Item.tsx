@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { TimeChart, TipRow } from '../components/charts/TimeChart'
-import { ItemIcon } from '../components/ItemIcon'
 import { Money } from '../components/Money'
 import { RangePicker } from '../components/RangePicker'
 import { Card, Empty, Gate, NoCompleteScan, StatTile } from '../components/States'
@@ -42,11 +41,8 @@ function ItemBody({ data, market, current, lastSeenAt }: { data: ItemFile; marke
 
   return (
     <div className="space-y-4">
-      <header className="flex items-start gap-3">
-        {/* Wowhead's tooltip only attaches to <a href>, so the icon and name link to Wowhead too. */}
-        <a href={wowheadUrl(item.key)} target="_blank" rel="noopener" data-wowhead={wowheadData(item.key)} tabIndex={-1} aria-hidden="true" className="shrink-0">
-          <ItemIcon icon={item.icon} quality={item.quality} size="large" />
-        </a>
+      <header>
+        {/* Wowhead's tooltip only attaches to <a href>, so the name links to Wowhead. */}
         <div className="min-w-0">
           <h1 className={`text-2xl font-bold break-words ${qualityClass(item.quality)}`}>
             <a href={wowheadUrl(item.key)} target="_blank" rel="noopener" data-wowhead={wowheadData(item.key)} className="hover:underline focus-visible:underline">

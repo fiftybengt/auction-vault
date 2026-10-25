@@ -162,3 +162,44 @@ body {
 .u-select {
   background: var(--wash-1);
 }
+
+/*
+ * Wowhead tooltip overrides (third-party markup from wow.zamimg.com/js/tooltips.js and the
+ * universal.css it injects). If Wowhead renames these classes, this block and
+ * src/lib/wowheadFit.ts are what to fix. Classes relied on:
+ *   .wowhead-tooltip          the hover tooltip box the script appends to <body> and positions
+ *                              with inline left/top/width (it holds the table and the icon)
+ *   .whtt-tooltip-icon        the tooltip's own 44px icon, absolutely placed left of the box
+ *                              (the script shows it with inline visibility: visible)
+ *   .wowhead-tooltip-powered  the red "WOWHEAD" logo badge beside the box
+ *   .wowhead-tooltip-screen   the full-screen touch "lightbox" mode; its box is not a child of
+ *                              <body>, so `body >` leaves it at its own size
+ *
+ * Size 1.2x: `transform: scale()` with a top-left origin. The script measures the box with
+ * getBoundingClientRect (which includes transforms) and then places its top-left corner at
+ * inline left/top, which a transform from 0 0 does not move, so flipping and clamping use the
+ * real, scaled size. Not `zoom` on the box: zoom also multiplies the inline left/top, so it
+ * lands in the wrong place. Not zoom on the children: the script's 320px width cap would then
+ * apply to the scaled size, so wide tooltips would only get taller.
+ * The script writes its measured (already scaled) width back as an inline width, which would
+ * scale twice, so width stays auto and the 320px cap is applied to the unscaled layout here,
+ * narrowed so the scaled box plus its scaled icon (~53px) fit small windows. !important beats
+ * the inline styles.
+ * Two of the script's checks use unscaled sizes (the "taller than the window" test and the 44px
+ * icon), so wowheadFit.ts sets --av-wh-scale lower for boxes that would not fit the window
+ * height and nudges the box so it and its icon stay on screen. If Wowhead's markup or
+ * positioning changes so that cannot work, it marks the box data-av-unfit and this rule stops
+ * applying: the tooltip falls back to Wowhead's own size and placement.
+ * pointer-events: none so a box or icon drawn under the cursor never steals the hover from the
+ * link (which would hide the tooltip). Hover tooltips have nothing to click.
+ */
+body > .wowhead-tooltip:not([data-av-unfit]) {
+  transform: scale(var(--av-wh-scale, 1.2));
+  transform-origin: 0 0;
+  width: auto !important;
+  max-width: min(320px, calc((100vw - 72px) / 1.2)) !important;
+  pointer-events: none;
+}
+.wowhead-tooltip-powered {
+  display: none !important;
+}
