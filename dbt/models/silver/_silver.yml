@@ -6,6 +6,15 @@ seeds:
     columns:
       - name: class_id
         data_tests: [unique, not_null]
+  - name: dashboard_groups
+    description: "C4 v4 dashboard groups, keyed on the client's localized item_type/item_subtype. subclass '*' matches any subclass of the class. Unlisted classes count only toward 'all'."
+    data_tests:
+      - unique_key: {arguments: {columns: [class_name, subclass_name]}}
+    columns:
+      - name: group_id
+        data_tests: [not_null]
+      - name: group_label
+        data_tests: [not_null]
   - name: dbc_item_subclass
     description: "ItemSubClass.dbc (3.3.5a), trimmed to ids, name and plural (verbose) name."
     data_tests:

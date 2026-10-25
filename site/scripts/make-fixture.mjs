@@ -4,9 +4,11 @@
 // timestamps are anchored to "now" so freshness looks realistic.
 //
 // Usage: npm run fixture                 normal market: 30 days, 4 complete scans/day, newest scan partial
-//        npm run fixture -- --no-complete  only partial scans exist yet (today's real situation)
+//        npm run fixture -- --no-complete  only partial scans exist yet
+//        npm run fixture -- --days 1       only N days of complete scans (default 12; try 1 or 2 for
+//                                          the dashboard's "not enough history" states)
 //
-// Shape follows docs/contracts.md C4 v3 exactly. Anything the contract leaves open is decided
+// Shape follows docs/contracts.md C4 v4 exactly. Anything the contract leaves open is decided
 // here and marked FIXTURE-CHOICE so it can be checked against the real export later.
 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -20,6 +22,10 @@ const REALM = 'Icecrown'
 const FACTION = 'Alliance'
 const MARKET_DIR = join(DATA, SLUG)
 const NO_COMPLETE = process.argv.includes('--no-complete')
+// FIXTURE-CHOICE: 12 days of complete scans by default, so the 7d extremes window is full and the
+// 30d window (needs 15 days) is still short, as on the real site in its first weeks.
+const daysArg = process.argv.indexOf('--days')
+const HISTORY_DAYS = daysArg > 0 ? Math.max(1, Number(process.argv[daysArg + 1]) || 12) : 12
 
 // ---------- deterministic RNG ----------
 let seed = 0x5eed1234
@@ -404,7 +410,7 @@ for (let d = 32; d >= 0; d--) {
   }
 }
 // Each scan: { at, complete, coverage }. A partial scan stops early, so it holds a prefix of rows.
-// FIXTURE-CHOICE: normal mode = 120 complete scans plus 3 partial ones, the newest scan being partial,
+// FIXTURE-CHOICE: normal mode = HISTORY_DAYS × 4 complete scans plus 3 partial ones, the newest scan being partial,
 // so the site must show it in the freshness line but never plot it.
 // --no-complete = three partial scans in the last day and nothing else.
 const scans = NO_COMPLETE
@@ -414,11 +420,18 @@ const scans = NO_COMPLETE
       { at: nowSec - 40 * 60, complete: false, coverage: 0.42 },
     ]
   : (() => {
-      const complete = scanTimes.slice(-120)
+      // Whole UTC days only, so historyDays is exactly HISTORY_DAYS.
+      const firstDay = todayUtc - (HISTORY_DAYS - 1) * DAY
+      const complete = scanTimes.filter((t) => t >= firstDay)
+      const at = (f) => complete[Math.floor((complete.length - 1) * f)]
       return [
         ...complete.map((at) => ({ at, complete: true, coverage: 1 })),
-        { at: complete[30] + 1800, complete: false, coverage: 0.37 },
-        { at: complete[77] + 2400, complete: false, coverage: 0.66 },
+        ...(complete.length > 4
+          ? [
+              { at: at(0.25) + 1800, complete: false, coverage: 0.37 },
+              { at: at(0.65) + 2400, complete: false, coverage: 0.66 },
+            ]
+          : []),
         { at: nowSec - 40 * 60, complete: false, coverage: 0.42 },
       ].sort((a, b) => a.at - b.at)
     })()
@@ -466,6 +479,25 @@ function quantile(sorted, q) {
   return Math.round(sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo))
 }
 
+/** TSM AuctionDB-style market value over one scan's buyout unit prices (one point per auction). */
+function marketValue(units) {
+  const sorted = [...units].sort((a, b) => a - b)
+  const n = sorted.length
+  let kept = sorted.slice(0, Math.max(1, Math.ceil(0.3 * n)))
+  for (let j = 1; j < kept.length; j++) {
+    if (j >= 0.15 * n && kept[j] >= 1.2 * kept[j - 1]) {
+      kept = kept.slice(0, j)
+      break
+    }
+  }
+  if (kept.length >= 2) {
+    const mean = kept.reduce((a, x) => a + x, 0) / kept.length
+    const sd = Math.sqrt(kept.reduce((a, x) => a + (x - mean) ** 2, 0) / kept.length)
+    kept = kept.filter((x) => Math.abs(x - mean) <= 1.5 * sd)
+  }
+  return Math.round(kept.reduce((a, x) => a + x, 0) / kept.length)
+}
+
 const timeWeights = [0.08, 0.17, 0.3, 0.45] // P(timeLeft = 1..4)
 function drawTimeLeft() {
   let r = rand()
@@ -488,6 +520,7 @@ const series = []
 const scanIds = new Map()
 const currentListings = new Map() // item -> rows of the newest complete scan
 const currentStats = new Map() // item -> history point of the newest complete scan
+const scanValues = new Map(items.map((it) => [it, []])) // item -> [{ at, value, listings, quantity }], complete scans
 
 for (const scan of scans) {
   const t = scan.at
@@ -533,6 +566,7 @@ for (const scan of scans) {
       units.sort((a, b) => a - b)
       const h = { at: t, min: units[0], p25: quantile(units, 0.25), median: quantile(units, 0.5), p75: quantile(units, 0.75), listings: n, quantity: qty }
       history.get(it).push(h)
+      scanValues.get(it).push({ at: t, value: marketValue(units), listings: n, quantity: qty })
       if (isCurrent) currentStats.set(it, h)
     }
     if (isCurrent) currentListings.set(it, rows)
@@ -560,6 +594,8 @@ writeFileSync(
     '- Local fixture: `npm run fixture` (or `npm run fixture -- --no-complete`); see `site/scripts/make-fixture.mjs`.\n',
 )
 
+// C4: index.json, itemCount and item files cover the items seen in that market in any scan.
+const seenItems = items.filter((it) => lastSeen.has(it))
 const keyOf = (it) => `${it.id}:${it.suffix}`
 const fileKey = (k) => k.replace(':', '_')
 
@@ -573,13 +609,13 @@ write(join(MARKET_DIR, 'meta.json'), {
   lastCompleteScan: lastComplete ? { id: scanIds.get(lastComplete), at: lastComplete.at, rowCount: lastComplete.rowCount } : null,
   scanCount: scans.length,
   completeScanCount: completeScans.length,
-  itemCount: items.length,
+  itemCount: seenItems.length,
 })
 
 write(join(MARKET_DIR, 'overview.json'), { series })
 
 const cols = ['key', 'id', 'name', 'quality', 'icon', 'class', 'subclass', 'median', 'min', 'listings', 'lastSeenAt']
-const rows = items.map((it) => {
+const rows = seenItems.map((it) => {
   const cur = currentStats.get(it)
   const n = currentListings.get(it)?.length ?? 0
   return [keyOf(it), it.id, it.name, it.quality, it.icon, it.cls, it.sub, cur?.median ?? null, cur?.min ?? null, n, lastSeen.get(it) ?? null]
@@ -611,9 +647,205 @@ for (const [name, span] of [['1d', DAY], ['7d', 7 * DAY]]) {
 }
 write(join(MARKET_DIR, 'movers.json'), { minListings: MIN_LISTINGS, windows })
 
+// ---------- dashboard.json (C4 v4) ----------
+// Follows the contract's definitions step by step: market value per scan, day value, normal price,
+// chained Jevons index, breadth, deals, overpriced, extremes, valuable.
+const PARAMS = { dealPct: 30, overPct: 30, minGainCopper: 10000, indexMinListings: 5, refMinDays: 2, refWindowDays: 14, refHalfLifeDays: 2, breadthFlatPct: 5 }
+const GROUPS = [
+  { id: 'cloth', label: 'Cloth' },
+  { id: 'herb', label: 'Herbs' },
+  { id: 'metal', label: 'Metal & Stone' },
+  { id: 'elemental', label: 'Elemental' },
+  { id: 'enchanting', label: 'Enchanting' },
+  { id: 'leather', label: 'Leather' },
+  { id: 'meat', label: 'Meat' },
+  { id: 'gem', label: 'Gems' },
+  { id: 'glyph', label: 'Glyphs' },
+  { id: 'consumable', label: 'Consumables' },
+  { id: 'recipe', label: 'Recipes' },
+  { id: 'gear', label: 'Gear' },
+]
+const TRADE_GROUPS = { Cloth: 'cloth', Herb: 'herb', 'Metal & Stone': 'metal', Elemental: 'elemental', Enchanting: 'enchanting', Leather: 'leather', Meat: 'meat' }
+function groupOf(it) {
+  if (it.cls === 'Trade Goods') return TRADE_GROUPS[it.sub] ?? null
+  if (it.cls === 'Gem') return 'gem'
+  if (it.cls === 'Glyph') return 'glyph'
+  if (it.cls === 'Consumable') return 'consumable'
+  if (it.cls === 'Recipe') return 'recipe'
+  if (it.cls === 'Armor' || it.cls === 'Weapon') return 'gear'
+  return null
+}
+const round1 = (x) => Math.round(x * 10) / 10
+const dayOf = (t) => Math.floor(t / DAY) * DAY
+
+function buildDashboard() {
+  const empty = (days) => ({ days, haveDays: 0, needDays: Math.max(3, Math.ceil(days / 2)), low: [], high: [] })
+  const marketDays = [...new Set(completeScans.map((s) => dayOf(s.at)))].sort((a, b) => a - b)
+  const base = { asOf: lastCompleteAt, historyDays: marketDays.length, params: PARAMS, groups: GROUPS }
+  if (!lastComplete) {
+    return { ...base, index: { series: [] }, breadth: null, deals: [], overpriced: [], extremes: { '7d': empty(7), '30d': empty(30) }, valuable: [] }
+  }
+  const today = dayOf(lastComplete.at)
+  const lastScanOfDay = new Map()
+  for (const s of completeScans) lastScanOfDay.set(dayOf(s.at), s.at)
+
+  // day values: item -> Map(day -> { value, listings, quantity })
+  const dayValues = new Map()
+  for (const it of items) {
+    const byDay = new Map()
+    for (const v of scanValues.get(it)) {
+      const d = dayOf(v.at)
+      const e = byDay.get(d) ?? { sum: 0, n: 0, listings: 0, quantity: 0 }
+      e.sum += v.value
+      e.n++
+      e.listings = Math.max(e.listings, v.listings)
+      e.quantity = Math.max(e.quantity, v.quantity)
+      byDay.set(d, e)
+    }
+    const out = new Map()
+    for (const [d, e] of byDay) out.set(d, { value: e.sum / e.n, listings: e.listings, quantity: e.quantity })
+    dayValues.set(it, out)
+  }
+
+  // normal price + bundle
+  const refs = new Map()
+  for (const it of items) {
+    const prior = [...dayValues.get(it)].filter(([d]) => d < today && d >= today - PARAMS.refWindowDays * DAY)
+    if (prior.length < PARAMS.refMinDays) continue
+    const meanListings = prior.reduce((a, [, v]) => a + v.listings, 0) / prior.length
+    if (meanListings < 3) continue
+    let wsum = 0
+    let vsum = 0
+    for (const [d, v] of prior) {
+      const w = Math.pow(0.5, (today - d) / DAY / PARAMS.refHalfLifeDays)
+      wsum += w
+      vsum += w * v.value
+    }
+    const meanQty = prior.reduce((a, [, v]) => a + v.quantity, 0) / prior.length
+    const bundle = meanQty < 10 ? 1 : meanQty < 50 ? 5 : meanQty < 200 ? 10 : 20
+    refs.set(it, { ref: Math.round(vsum / wsum), bundle })
+  }
+
+  // market index (chained Jevons); FIXTURE-CHOICE: every group starts at 100 on the first day.
+  const ids = ['all', ...GROUPS.map((g) => g.id)]
+  const level = Object.fromEntries(ids.map((id) => [id, 100]))
+  const series = []
+  let lastRel = null // relatives of the last pair, for breadth
+  marketDays.forEach((d1, k) => {
+    const values = Object.fromEntries(ids.map((id) => [id, 100]))
+    let eligible = 0
+    if (k > 0) {
+      const d0 = marketDays[k - 1]
+      const logs = Object.fromEntries(ids.map((id) => [id, []]))
+      const rel = []
+      for (const it of items) {
+        const a = dayValues.get(it).get(d0)
+        const b = dayValues.get(it).get(d1)
+        if (!a || !b || a.listings < PARAMS.indexMinListings || b.listings < PARAMS.indexMinListings) continue
+        const r = Math.min(2, Math.max(0.5, b.value / a.value))
+        rel.push(b.value / a.value)
+        logs.all.push(Math.log(r))
+        const g = groupOf(it)
+        if (g) logs[g].push(Math.log(r))
+      }
+      eligible = logs.all.length
+      lastRel = rel
+      for (const id of ids) {
+        const l = logs[id]
+        if (l.length < 5) {
+          values[id] = null
+          continue
+        }
+        level[id] *= Math.exp(l.reduce((a, x) => a + x, 0) / l.length)
+        values[id] = Math.round(level[id] * 100) / 100
+      }
+    }
+    series.push({ at: lastScanOfDay.get(d1), values, items: eligible })
+  })
+
+  let breadth = null
+  if (series.length >= 2 && lastRel) {
+    const f = PARAMS.breadthFlatPct / 100
+    const up = lastRel.filter((r) => r > 1 + f).length
+    const down = lastRel.filter((r) => r < 1 - f).length
+    breadth = { at: series.at(-1).at, prevAt: series.at(-2).at, up, down, flat: lastRel.length - up - down }
+  }
+
+  const head = (it) => ({ key: keyOf(it), name: it.name, quality: it.quality, icon: it.icon })
+  const cmpKey = (a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+  const deals = []
+  const overpriced = []
+  const valuable = []
+  for (const it of items) {
+    const cur = scanValues.get(it).find((v) => v.at === lastComplete.at)
+    if (!cur) continue
+    const stats = currentStats.get(it)
+    valuable.push({ ...head(it), unit: cur.value, min: stats.min, listings: cur.listings })
+    const r = refs.get(it)
+    if (!r) continue
+    // deals: mean of the cheapest `bundle` units, partial stacks allowed
+    const rows = (currentListings.get(it) ?? []).filter((l) => l.unit != null).sort((a, b) => a.unit - b.unit)
+    if (cur.quantity >= r.bundle) {
+      let need = r.bundle
+      let cost = 0
+      for (const l of rows) {
+        const take = Math.min(need, l.stack)
+        cost += take * l.unit
+        need -= take
+        if (need === 0) break
+      }
+      if (need === 0) {
+        const unit = Math.round(cost / r.bundle)
+        const gain = (r.ref - unit) * r.bundle
+        if (unit <= r.ref * (1 - PARAMS.dealPct / 100) && gain >= PARAMS.minGainCopper)
+          deals.push({ ...head(it), bundle: r.bundle, unit, ref: r.ref, pct: round1((unit / r.ref - 1) * 100), gain, listings: cur.listings })
+      }
+    }
+    if (cur.listings >= 3) {
+      const unit = cur.value
+      const gain = (unit - r.ref) * r.bundle
+      if (unit >= r.ref * (1 + PARAMS.overPct / 100) && gain >= PARAMS.minGainCopper)
+        overpriced.push({ ...head(it), bundle: r.bundle, unit, ref: r.ref, pct: round1((unit / r.ref - 1) * 100), gain, listings: cur.listings })
+    }
+  }
+  deals.sort((a, b) => a.pct - b.pct || b.gain - a.gain || cmpKey(a, b))
+  overpriced.sort((a, b) => b.pct - a.pct || b.gain - a.gain || cmpKey(a, b))
+  valuable.sort((a, b) => b.unit - a.unit || cmpKey(a, b))
+
+  const extremes = {}
+  for (const [name, days] of [['7d', 7], ['30d', 30]]) {
+    const from = today - (days - 1) * DAY
+    const haveDays = marketDays.filter((d) => d >= from && d <= today).length
+    const needDays = Math.max(3, Math.ceil(days / 2))
+    const low = []
+    const high = []
+    if (haveDays >= needDays) {
+      for (const it of items) {
+        const dv = dayValues.get(it)
+        const t = dv.get(today)
+        if (!t || t.listings < 3) continue
+        const others = [...dv].filter(([d]) => d >= from && d < today).map(([, v]) => v.value)
+        if (others.length + 1 < needDays) continue
+        const unit = Math.round(t.value)
+        const lo = Math.round(Math.min(...others))
+        const hi = Math.round(Math.max(...others))
+        if (unit < lo) low.push({ ...head(it), unit, prev: lo, pct: round1((unit / lo - 1) * 100), listings: t.listings })
+        if (unit > hi) high.push({ ...head(it), unit, prev: hi, pct: round1((unit / hi - 1) * 100), listings: t.listings })
+      }
+    }
+    low.sort((a, b) => a.pct - b.pct || cmpKey(a, b))
+    high.sort((a, b) => b.pct - a.pct || cmpKey(a, b))
+    extremes[name] = { days, haveDays, needDays, low: low.slice(0, 25), high: high.slice(0, 25) }
+  }
+
+  return { ...base, index: { series }, breadth, deals: deals.slice(0, 50), overpriced: overpriced.slice(0, 50), extremes, valuable: valuable.slice(0, 25) }
+}
+const dashboard = buildDashboard()
+write(join(MARKET_DIR, 'dashboard.json'), dashboard)
+
 const byUnit = (a, b) => (a.unit === null ? 1 : 0) - (b.unit === null ? 1 : 0) || (a.unit ?? 0) - (b.unit ?? 0)
 const sellerAgg = new Map()
-for (const it of items) {
+for (const it of seenItems) {
   const key = keyOf(it)
   const listings = [...(currentListings.get(it) ?? [])].sort(byUnit)
   write(join(MARKET_DIR, 'items', `${fileKey(key)}.json`), {
@@ -658,5 +890,6 @@ const sparse = items.filter((it) => history.get(it).length < 30).length
 console.log(
   `fixture${NO_COMPLETE ? ' (--no-complete)' : ''}: ${items.length} items (${sparse} sparse), ` +
     `${completeScans.length} complete + ${scans.length - completeScans.length} partial scans, ${sellerAgg.size} named sellers, ` +
-    `movers windows [${Object.keys(windows).join(', ')}] -> ${DATA}`,
+    `movers windows [${Object.keys(windows).join(', ')}], dashboard ${dashboard.historyDays} days / ` +
+    `${dashboard.index.series.length} index points / ${dashboard.deals.length} deals / ${dashboard.overpriced.length} overpriced -> ${DATA}`,
 )

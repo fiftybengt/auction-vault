@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { IndexFile, IndexRow, ItemFile, Market, Meta, Movers, Overview, SellerFile } from './types'
+import type { Dashboard, IndexFile, IndexRow, ItemFile, Market, Meta, Movers, Overview, SellerFile } from './types'
 
 // One fetch per file per page load. Entries are immutable snapshots so useSyncExternalStore
 // can compare them by reference.
@@ -55,6 +55,7 @@ export const useMarkets = () => useJson<Market[]>('markets.json')
 export const useMeta = (m: string) => useJson<Meta>(`${m}/meta.json`)
 export const useOverview = (m: string) => useJson<Overview>(`${m}/overview.json`)
 export const useMovers = (m: string) => useJson<Movers>(`${m}/movers.json`)
+export const useDashboard = (m: string) => useJson<Dashboard>(`${m}/dashboard.json`)
 export const useItem = (m: string, key: string) => useJson<ItemFile>(`${m}/items/${encodeURIComponent(keyToFile(key))}.json`)
 export const useSeller = (m: string, name: string) => useJson<SellerFile>(`${m}/sellers/${encodeURIComponent(name)}.json`)
 

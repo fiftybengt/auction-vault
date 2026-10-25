@@ -1,12 +1,16 @@
-"""Shape check for the site JSON, contract C4 v3 (docs/contracts.md).
+"""Shape check for the site JSON, contract C4 v4 (docs/contracts.md).
 
     python export/check_c4.py <data_dir>
 
 Checks every file's keys and value types, the columnar index, sort orders, file names, and
-that money is integer copper or null (never a float, never a bool).
+that money is integer copper or null (never a float, never a bool). For dashboard.json (v4) it
+also checks the invariants: sort orders, list thresholds against `params`, `params` against the
+dbt vars in dbt/dbt_project.yml, `values.all` = 100 on the first index point, breadth against
+the last two points, and both extremes windows.
 """
 
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -14,6 +18,40 @@ from pathlib import Path
 INDEX_COLS = ["key", "id", "name", "quality", "icon", "class", "subclass", "median", "min", "listings", "lastSeenAt"]
 
 ICON_RE = re.compile(r"[a-z0-9_&-]+")  # C1 icon character set ^[a-z0-9_&-]+$ (fullmatch)
+
+# dashboard.json params (C4 v4) -> dbt var (dbt/dbt_project.yml)
+DASHBOARD_PARAMS = {"dealPct": "deal_pct", "overPct": "over_pct", "minGainCopper": "min_gain_copper",
+                    "indexMinListings": "index_min_listings", "refMinDays": "ref_min_days",
+                    "refWindowDays": "ref_window_days", "refHalfLifeDays": "ref_half_life_days",
+                    "breadthFlatPct": "breadth_flat_pct"}
+DBT_PROJECT = Path(__file__).resolve().parent.parent / "dbt" / "dbt_project.yml"
+PRICED_KEYS = ["key", "name", "quality", "icon", "bundle", "unit", "ref", "pct", "gain", "listings"]
+EXTREME_KEYS = ["key", "name", "quality", "icon", "unit", "prev", "pct", "listings"]
+VALUABLE_KEYS = ["key", "name", "quality", "icon", "unit", "min", "listings"]
+
+
+def dbt_vars():
+    """Integer vars from dbt_project.yml's `vars:` block (no YAML dependency), or None if absent."""
+    if not DBT_PROJECT.exists():
+        return None
+    out, in_vars = {}, False
+    for line in DBT_PROJECT.read_text(encoding="utf-8").splitlines():
+        if re.match(r"^\S", line):
+            in_vars = line.startswith("vars:")
+            continue
+        m = in_vars and re.match(r"^  (\w+):\s*(-?\d+)\s*(#.*)?$", line)
+        if m:
+            out[m.group(1)] = int(m.group(2))
+    return out
+
+
+def is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def is_num(v):
+    """A JSON number: int or finite float (NaN/Infinity are not valid JSON), never a bool."""
+    return is_int(v) or (isinstance(v, float) and math.isfinite(v))
 
 
 class Check:
@@ -41,8 +79,8 @@ class Check:
     def num(self, where, v, nullable=False):
         if v is None and nullable:
             return
-        if not isinstance(v, (int, float)) or isinstance(v, bool):
-            self.err(where, f"expected number, got {v!r}")
+        if not is_num(v):
+            self.err(where, f"expected finite number, got {v!r}")
 
     def str_(self, where, v, nullable=False):
         if v is None and nullable:
@@ -183,6 +221,8 @@ def check_market(c, d, m):
                             if side == "up" and r["pct"] <= 0 or side == "down" and r["pct"] >= 0:
                                 c.err(ra, f"pct {r['pct']} on the wrong side")
 
+    check_dashboard(c, d, meta)
+
     items_dir = d / "items"
     files = {p.stem for p in items_dir.glob("*.json")} if items_dir.is_dir() else set()
     expected = {k.replace(":", "_") for k in keys}
@@ -261,8 +301,227 @@ def check_market(c, d, m):
                 c.int_(ea + ".unit", e["unit"], nullable=True)
 
 
+def check_dashboard(c, d, meta):
+    w = f"{d.name}/dashboard"
+    db = load(c, d / "dashboard.json") if (d / "dashboard.json").exists() else None
+    if db is None:
+        c.err(w, "dashboard.json missing")
+        return
+    if not c.keys(w, db, ["asOf", "historyDays", "params", "groups", "index", "breadth", "deals",
+                          "overpriced", "extremes", "valuable"]):
+        return
+    as_of = db["asOf"]
+    c.int_(w + ".asOf", as_of, nullable=True)
+    c.int_(w + ".historyDays", db["historyDays"])
+    lc = meta.get("lastCompleteScan") if isinstance(meta, dict) else None
+    if meta is not None and as_of != (lc["at"] if lc else None):
+        c.err(w, "asOf != meta.lastCompleteScan.at")
+
+    # params: exact keys, ints, and equal to the dbt vars
+    # A wrong key or type is reported, and the lists are still checked: a threshold whose
+    # param is missing or not an int is skipped (lim[k] is None), never a traceback.
+    prm = db["params"]
+    c.keys(w + ".params", prm, list(DASHBOARD_PARAMS))
+    prm = prm if isinstance(prm, dict) else {}
+    lim = {}
+    for k in DASHBOARD_PARAMS:
+        if k in prm:
+            c.int_(f"{w}.params.{k}", prm[k])
+        lim[k] = prm[k] if is_int(prm.get(k)) else None
+    dv = dbt_vars()
+    if dv is not None:
+        for k, var in DASHBOARD_PARAMS.items():
+            if k in prm and dv.get(var) != prm[k]:
+                c.err(w + ".params", f"{k}={prm[k]!r} but dbt var {var}={dv.get(var)!r}")
+
+    # groups
+    gids = []
+    for i, gr in enumerate(c.list_(w + ".groups", db["groups"])):
+        at = f"{w}.groups[{i}]"
+        if c.keys(at, gr, ["id", "label"]):
+            c.str_(at + ".id", gr["id"])
+            c.str_(at + ".label", gr["label"])
+            gids.append(gr["id"])
+    if len(set(gids)) != len(gids) or "all" in gids:
+        c.err(w + ".groups", f"ids must be unique and not 'all': {gids}")
+
+    # index
+    series = []
+    if c.keys(w + ".index", db["index"], ["series"]):
+        series = c.list_(w + ".index.series", db["index"]["series"])
+    for i, pt in enumerate(series):
+        at = f"{w}.index.series[{i}]"
+        if not c.keys(at, pt, ["at", "values", "items"]):
+            continue
+        c.int_(at + ".at", pt["at"])
+        c.int_(at + ".items", pt["items"])
+        vals = pt["values"]
+        if c.keys(at + ".values", vals, ["all"] + gids):
+            for k, v in vals.items():
+                c.num(f"{at}.values.{k}", v, nullable=True)
+            if i == 0:
+                # every series starts at 100: `all` always, each group wherever it is non-null
+                if vals.get("all") != 100:
+                    c.err(at, f"values.all is {vals.get('all')!r} on the first point, expected 100")
+                for k, v in vals.items():
+                    if k != "all" and v is not None and v != 100:
+                        c.err(at, f"values.{k} is {v!r} on the first point, expected 100 or null")
+        if i == 0 and pt["items"] != 0:
+            c.err(at, f"items is {pt['items']!r} on the first point, expected 0 (no previous day)")
+    ats = [pt.get("at") for pt in series if isinstance(pt, dict)]
+    if any(not isinstance(a, int) for a in ats) or any(b <= a for a, b in zip(ats, ats[1:])):
+        c.err(w + ".index.series", "not strictly ascending by at")
+    if as_of is not None and len(series) != db["historyDays"]:
+        c.err(w + ".index.series", "length != historyDays (one point per day with data)")
+
+    # breadth
+    br = db["breadth"]
+    if len(series) < 2:
+        if br is not None:
+            c.err(w + ".breadth", "must be null with fewer than 2 index days")
+    elif c.keys(w + ".breadth", br, ["at", "prevAt", "up", "down", "flat"]):
+        for k in ("at", "prevAt", "up", "down", "flat"):
+            c.int_(f"{w}.breadth.{k}", br[k])
+        if br["at"] != series[-1].get("at") or br["prevAt"] != series[-2].get("at"):
+            c.err(w + ".breadth", "at/prevAt are not the last two index points")
+        if all(isinstance(br[k], int) for k in ("up", "down", "flat")) and \
+                br["up"] + br["down"] + br["flat"] != series[-1].get("items"):
+            c.err(w + ".breadth", "up + down + flat != items of the last index point")
+
+    def head(at, r):
+        c.str_(at + ".key", r["key"])
+        c.str_(at + ".name", r["name"], nullable=True)
+        c.int_(at + ".quality", r["quality"], nullable=True)
+        c.icon(at + ".icon", r["icon"])
+
+    def pct_ok(at, r, base):
+        if is_num(r["pct"]) and base:
+            if abs(r["pct"] - (r["unit"] / base - 1) * 100) > 0.05 + 1e-9:
+                c.err(at, f"pct {r['pct']} != (unit/{base} - 1) * 100 rounded to 0.1")
+
+    def ints(at, r, keys):
+        ok = True
+        for k in keys:
+            c.int_(f"{at}.{k}", r[k])
+            ok = ok and isinstance(r[k], int) and not isinstance(r[k], bool)
+        return ok
+
+    def sorted_by(at, rows, key, limit):
+        if len(rows) > limit:
+            c.err(at, f"{len(rows)} rows > top {limit}")
+        try:
+            if [key(r) for r in rows] != sorted(key(r) for r in rows):
+                c.err(at, "rows not in the contract's sort order")
+        except (TypeError, KeyError):
+            c.err(at, "rows not sortable (bad types)")
+        keys = [r.get("key") for r in rows if isinstance(r, dict)]
+        if len(set(keys)) != len(keys):
+            c.err(at, "duplicate key")
+
+    def priced(name, deal):
+        rows = c.list_(f"{w}.{name}", db[name])
+        good = []
+        for i, r in enumerate(rows):
+            at = f"{w}.{name}[{i}]"
+            if not c.keys(at, r, PRICED_KEYS):
+                continue
+            head(at, r)
+            c.num(at + ".pct", r["pct"])
+            if not ints(at, r, ["bundle", "unit", "ref", "gain", "listings"]) or not is_num(r["pct"]):
+                continue
+            good.append(r)
+            u, ref, b = r["unit"], r["ref"], r["bundle"]
+            if b not in (1, 5, 10, 20):
+                c.err(at, f"bundle {b} not in 1/5/10/20")
+            if ref <= 0:
+                c.err(at, "ref must be > 0")
+                continue
+            if deal:
+                if lim["dealPct"] is not None and u * 100 > ref * (100 - lim["dealPct"]):
+                    c.err(at, f"unit {u} > ref {ref} x (1 - dealPct/100)")
+                if r["gain"] != (ref - u) * b:
+                    c.err(at, "gain != (ref - unit) x bundle")
+                if not r["pct"] < 0:
+                    c.err(at, "deal pct must be negative")
+            else:
+                if lim["overPct"] is not None and u * 100 < ref * (100 + lim["overPct"]):
+                    c.err(at, f"unit {u} < ref {ref} x (1 + overPct/100)")
+                if r["gain"] != (u - ref) * b:
+                    c.err(at, "gain != (unit - ref) x bundle")
+                if r["listings"] < 3:
+                    c.err(at, "overpriced needs listings >= 3")
+            if lim["minGainCopper"] is not None and r["gain"] < lim["minGainCopper"]:
+                c.err(at, f"gain {r['gain']} < minGainCopper")
+            pct_ok(at, r, ref)
+        sign = 1 if deal else -1
+        if len(good) == len(rows):
+            sorted_by(f"{w}.{name}", rows, lambda r: (sign * r["pct"], -r["gain"], r["key"]), 50)
+        return rows
+
+    deals = priced("deals", True)
+    over = priced("overpriced", False)
+
+    ex = db["extremes"]
+    ext_rows = []
+    if c.keys(w + ".extremes", ex, ["7d", "30d"]):
+        for wid, n in (("7d", 7), ("30d", 30)):
+            at = f"{w}.extremes.{wid}"
+            e = ex[wid]
+            if not c.keys(at, e, ["days", "haveDays", "needDays", "low", "high"]):
+                continue
+            if e["days"] != n:
+                c.err(at, f"days {e['days']!r} != {n}")
+            need = max(3, -(-n // 2))
+            if e["needDays"] != need:
+                c.err(at, f"needDays {e['needDays']!r} != max(3, ceil(days/2)) = {need}")
+            c.int_(at + ".haveDays", e["haveDays"])
+            hd = db["historyDays"] if is_int(db["historyDays"]) else n
+            if is_int(e["haveDays"]) and not 0 <= e["haveDays"] <= min(n, hd):
+                c.err(at, "haveDays outside 0..min(days, historyDays)")
+            for side in ("low", "high"):
+                rows = c.list_(f"{at}.{side}", e[side])
+                ext_rows += rows
+                if rows and is_int(e["haveDays"]) and e["haveDays"] < need:
+                    c.err(f"{at}.{side}", "must be empty while haveDays < needDays")
+                good = []
+                for i, r in enumerate(rows):
+                    ra = f"{at}.{side}[{i}]"
+                    if not c.keys(ra, r, EXTREME_KEYS):
+                        continue
+                    head(ra, r)
+                    c.num(ra + ".pct", r["pct"])
+                    if not ints(ra, r, ["unit", "prev", "listings"]) or not is_num(r["pct"]):
+                        continue
+                    good.append(r)
+                    if side == "low" and not r["unit"] < r["prev"] or side == "high" and not r["unit"] > r["prev"]:
+                        c.err(ra, f"unit {r['unit']} is not strictly {'below' if side == 'low' else 'above'} prev")
+                    if r["listings"] < 3:
+                        c.err(ra, "extremes need listings >= 3")
+                    pct_ok(ra, r, r["prev"])
+                sign = 1 if side == "low" else -1
+                if len(good) == len(rows):
+                    sorted_by(f"{at}.{side}", rows, lambda r: (sign * r["pct"], r["key"]), 25)
+
+    val = c.list_(w + ".valuable", db["valuable"])
+    good = []
+    for i, r in enumerate(val):
+        at = f"{w}.valuable[{i}]"
+        if c.keys(at, r, VALUABLE_KEYS):
+            head(at, r)
+            c.int_(at + ".min", r["min"], nullable=True)
+            if ints(at, r, ["unit", "listings"]):
+                good.append(r)
+                if isinstance(r["min"], int) and r["min"] > r["unit"]:
+                    c.err(at, "min > unit")
+    if len(good) == len(val):
+        sorted_by(w + ".valuable", val, lambda r: (-r["unit"], r["key"]), 25)
+
+    if as_of is None and (series or br is not None or deals or over or ext_rows or val):
+        c.err(w, "asOf is null, so every list must be empty, series [] and breadth null")
+
+
 def check(out):
-    """Return a list of C4 v3 violations under `out` (empty list = valid)."""
+    """Return a list of C4 v4 violations under `out` (empty list = valid)."""
     out = Path(out)
     c = Check()
     mk = load(c, out / "markets.json") if (out / "markets.json").exists() else None

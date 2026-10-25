@@ -1,4 +1,4 @@
-"""Gold tables (C3) -> site JSON (C4 v3).
+"""Gold tables (C3) -> site JSON (C4 v4).
 
     scripts/with-databricks dbt/.venv/bin/python export/export_gold.py [--out site/public/data]
     dbt/.venv/bin/python export/export_gold.py --check-only <dir>     # shape check, no warehouse
@@ -31,6 +31,13 @@ MOVERS_TOP = 10
 WINDOWS = ("1d", "7d")
 MIN_LISTINGS = 3  # must match the dbt var movers_min_listings (dbt/dbt_project.yml)
 ICON_RE = re.compile(r"[a-z0-9_&-]+")  # C1 icon character set, ^[a-z0-9_&-]+$ (fullmatch)
+DAY = 86400
+# dashboard.json (C4 v4): params key -> gold.dashboard_params column (the dbt vars of the build)
+DASHBOARD_PARAMS = {"dealPct": "deal_pct", "overPct": "over_pct", "minGainCopper": "min_gain_copper",
+                    "indexMinListings": "index_min_listings", "refMinDays": "ref_min_days",
+                    "refWindowDays": "ref_window_days", "refHalfLifeDays": "ref_half_life_days",
+                    "breadthFlatPct": "breadth_flat_pct"}
+EXTREME_WINDOWS = (("7d", 7), ("30d", 30))
 
 
 # ------------------------------------------------------------------ warehouse
@@ -95,7 +102,8 @@ def seller_filename_ok(name):
 
 
 def dumps(obj):
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+    # allow_nan=False: a NaN/Infinity from the warehouse fails the export instead of writing invalid JSON
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n"
 
 
 class Writer:
@@ -141,6 +149,16 @@ def build(cur):
         from {g('market_overview')} order by realm, faction, scan_at, scan_id""")
     current = {(r["realm"], r["faction"]): r for r in query(cur, f"select * from {g('latest_scan')}")}
 
+    params_row = query(cur, f"select * from {g('dashboard_params')}")
+    if len(params_row) != 1:
+        raise SystemExit(f"gold.dashboard_params has {len(params_row)} rows, expected 1")
+    dash = {
+        "params": {k: int(params_row[0][col]) for k, col in DASHBOARD_PARAMS.items()},
+        "groups": [{"id": r["group_id"], "label": r["group_label"]} for r in query(cur, f"""
+            select group_id, max(group_label) as group_label, min(group_order) as group_order
+            from {s('dashboard_groups')} group by group_id order by group_order, group_id""")],
+    }
+
     by_market = defaultdict(list)
     for r in scans:
         by_market[(r["realm"], r["faction"])].append(r)
@@ -154,6 +172,7 @@ def build(cur):
                         "lastCompleteScanAt": cur_scan["scan_at"] if cur_scan else None,
                         "scans": len(mscans)})
         build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated)
+        build_dashboard(cur, w, slug, realm, faction, mscans, cur_scan, dash)
     w.put("markets.json", markets)
     return w, {m["slug"] for m in markets}
 
@@ -287,6 +306,80 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
             "items": sorted(sd["items"].values(), key=lambda e: (-e["count"], e["name"] or "", e["key"]))})
 
 
+def build_dashboard(cur, w, slug, realm, faction, mscans, cur_scan, dash):
+    """dashboard.json (C4 v4). Everything is ranked in dbt (gold.dashboard_*); this only shapes it."""
+    p = {"realm": realm, "faction": faction}
+    days = sorted({r["scan_at"] // DAY for r in mscans if r["complete"]})
+    group_ids = [gr["id"] for gr in dash["groups"]]
+
+    def head(r):
+        return {"key": r["item_key"], "name": r["name"], "quality": to_int(r["quality"]), "icon": r["icon"]}
+
+    def ranked(table, cols, order="t.rank"):
+        return clean_icons(query(cur, f"""
+            select t.item_key, {cols}, i.name, i.quality, i.icon
+            from {g(table)} t
+            left join {s('items')} i on i.item_key = t.item_key
+            where t.realm = :realm and t.faction = :faction
+            order by {order}""", p))
+
+    series, breadth = [], None
+    deals, overpriced, valuable = [], [], []
+    extremes = {wid: {"days": n, "haveDays": 0, "needDays": max(3, -(-n // 2)), "low": [], "high": []}
+                for wid, n in EXTREME_WINDOWS}
+    if cur_scan is not None:
+        by_day = defaultdict(dict)
+        for r in query(cur, f"""
+                select unix_day, day_at, group_id, items, index_value, up, down, flat
+                from {g('market_index')} where realm = :realm and faction = :faction
+                order by unix_day, group_id""", p):
+            by_day[r["unix_day"]][r["group_id"]] = r
+        for d in sorted(by_day):
+            rows = by_day[d]
+            a = rows["all"]
+            values = {gid: (None if rows.get(gid, {}).get("index_value") is None
+                            else float(rows[gid]["index_value"])) for gid in ["all"] + group_ids}
+            series.append({"at": a["day_at"], "values": values, "items": int(a["items"])})
+        if len(series) >= 2:
+            last = by_day[max(by_day)]["all"]
+            breadth = {"at": series[-1]["at"], "prevAt": series[-2]["at"],
+                       "up": int(last["up"]), "down": int(last["down"]), "flat": int(last["flat"])}
+
+        def priced(r):
+            return {**head(r), "bundle": int(r["bundle"]), "unit": money(r["unit"]), "ref": money(r["ref_unit"]),
+                    "pct": float(r["pct"]), "gain": money(r["gain"]), "listings": int(r["listings"])}
+
+        cols = "t.bundle, t.unit, t.ref_unit, t.pct, t.gain, t.listings"
+        deals = [priced(r) for r in ranked("dashboard_deals", cols)]
+        overpriced = [priced(r) for r in ranked("dashboard_overpriced", cols)]
+        valuable = [{**head(r), "unit": money(r["unit"]), "min": money(r["min_unit"]), "listings": int(r["listings"])}
+                    for r in ranked("dashboard_valuable", "t.unit, t.min_unit, t.listings")]
+
+        today = cur_scan["scan_at"] // DAY
+        ext = ranked("dashboard_extremes", "t.window_id, t.side, t.unit, t.prev_unit, t.pct, t.listings",
+                     order="t.window_id, t.side, t.rank")
+        for wid, n in EXTREME_WINDOWS:
+            e = extremes[wid]
+            e["haveDays"] = sum(1 for d in days if today - n < d <= today)
+            for side in ("low", "high"):
+                e[side] = [{**head(r), "unit": money(r["unit"]), "prev": money(r["prev_unit"]),
+                            "pct": float(r["pct"]), "listings": int(r["listings"])}
+                           for r in ext if r["window_id"] == wid and r["side"] == side]
+
+    w.put(f"{slug}/dashboard.json", {
+        "asOf": cur_scan["scan_at"] if cur_scan else None,
+        "historyDays": len(days),
+        "params": dash["params"],
+        "groups": dash["groups"],
+        "index": {"series": series},
+        "breadth": breadth,
+        "deals": deals,
+        "overpriced": overpriced,
+        "extremes": extremes,
+        "valuable": valuable,
+    })
+
+
 # ------------------------------------------------------------------ main
 
 def report(out):
@@ -328,7 +421,7 @@ def main(argv=None):
             print(f"C4 violation: {e}", file=sys.stderr)
         print(f"{len(errors)} C4 violation(s)", file=sys.stderr)
         return 1
-    print("C4 v3 shape check: OK")
+    print("C4 v4 shape check: OK")
     return 0
 
 

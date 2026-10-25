@@ -3,8 +3,9 @@
 /*
  * Design tokens. Light is the default; dark is a selected set of steps (not an automatic flip),
  * applied for the OS setting unless the viewer picked light, and always when they picked dark.
- * Chart series colours come from the dataviz reference palette (slot 1 blue, slot 2 orange),
- * validated with validate_palette.js against both surfaces.
+ * Chart series colours come from the dataviz reference palette (slots 1-3: blue, orange, aqua),
+ * validated all-pairs with validate_palette.js against both surfaces. Light aqua is under 3:1,
+ * so every chart using it also has a legend and a table view.
  */
 :root {
   color-scheme: light;
@@ -20,6 +21,15 @@
   --accent: #1c5cab;
   --series-1: #2a78d6;
   --series-2: #eb6834;
+  --series-3: #1baf7a;
+  /* Finance up/down (Overview). Marks validated as a pair (validate_palette.js, light), inks >= 4.5:1
+     on the surface and on their wash. Always paired with a ▲/▼ glyph and a sign. */
+  --gain: #22a050;
+  --loss: #b3261e;
+  --gain-ink: #137333;
+  --loss-ink: #a8231c;
+  --gain-wash: rgba(34, 160, 80, 0.12);
+  --loss-wash: rgba(179, 38, 30, 0.12);
   --band-1: rgba(42, 120, 214, 0.16);
   --wash-1: rgba(42, 120, 214, 0.1);
   --warning: #fab219;
@@ -57,6 +67,13 @@
     --accent: #6da7ec;
     --series-1: #3987e5;
     --series-2: #d95926;
+    --series-3: #199e70;
+    --gain: #2eac60;
+    --loss: #c4302f;
+    --gain-ink: #4cc47a;
+    --loss-ink: #f07a73;
+    --gain-wash: rgba(46, 172, 96, 0.18);
+    --loss-wash: rgba(196, 48, 47, 0.18);
     --band-1: rgba(57, 135, 229, 0.22);
     --wash-1: rgba(57, 135, 229, 0.12);
     --warning-ink: #fab219;
@@ -90,6 +107,13 @@
   --accent: #6da7ec;
   --series-1: #3987e5;
   --series-2: #d95926;
+  --series-3: #199e70;
+  --gain: #2eac60;
+  --loss: #c4302f;
+  --gain-ink: #4cc47a;
+  --loss-ink: #f07a73;
+  --gain-wash: rgba(46, 172, 96, 0.18);
+  --loss-wash: rgba(196, 48, 47, 0.18);
   --band-1: rgba(57, 135, 229, 0.22);
   --wash-1: rgba(57, 135, 229, 0.12);
   --warning-ink: #fab219;
@@ -121,6 +145,13 @@
   --color-accent: var(--accent);
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-gain: var(--gain);
+  --color-loss: var(--loss);
+  --color-gain-ink: var(--gain-ink);
+  --color-loss-ink: var(--loss-ink);
+  --color-gain-wash: var(--gain-wash);
+  --color-loss-wash: var(--loss-wash);
   --color-warning: var(--warning);
   --color-warning-ink: var(--warning-ink);
   --color-critical: var(--critical);
@@ -202,4 +233,9 @@ body > .wowhead-tooltip:not([data-av-unfit]) {
 }
 .wowhead-tooltip-powered {
   display: none !important;
+}
+
+/* Overview hero chart: a solid hairline crosshair instead of uPlot's dashed default */
+.hero-chart .u-cursor-x {
+  border-right: 1px solid var(--ink-muted);
 }
