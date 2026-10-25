@@ -1,0 +1,14 @@
+class_name,subclass_name,group_id,group_label,group_order
+Trade Goods,Cloth,cloth,Cloth,1
+Trade Goods,Herb,herb,Herbs,2
+Trade Goods,Metal & Stone,metal,Metal & Stone,3
+Trade Goods,Elemental,elemental,Elemental,4
+Trade Goods,Enchanting,enchanting,Enchanting,5
+Trade Goods,Leather,leather,Leather,6
+Trade Goods,Meat,meat,Meat,7
+Gem,*,gem,Gems,8
+Glyph,*,glyph,Glyphs,9
+Consumable,*,consumable,Consumables,10
+Recipe,*,recipe,Recipes,11
+Armor,*,gear,Gear,12
+Weapon,*,gear,Gear,12

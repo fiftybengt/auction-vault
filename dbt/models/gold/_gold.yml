@@ -77,3 +77,94 @@ models:
     columns:
       - name: seller
         data_tests: [not_null]
+
+  # ---------------------------------------------------------------- dashboard (C3 v3 / C4 v4)
+
+  - name: item_scan_value
+    description: "market x COMPLETE scan x item_key: market_unit, the TSM AuctionDB-style market value over buyout listings (C4 v4 'Market value'). Items with only bid-only listings have no row. Incremental (merge)."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, scan_id, item_key]}}
+    columns:
+      - name: realm
+        data_tests: [not_null]
+      - name: faction
+        data_tests: [not_null]
+      - name: scan_id
+        data_tests: [not_null]
+      - name: item_key
+        data_tests: [not_null]
+      - name: market_unit
+        description: "Mean of the points left after the 30% / 1.2x-jump / 1.5-sigma cuts, integer copper."
+        data_tests: [not_null]
+      - name: points
+        description: "Points the mean is taken over."
+      - name: listings
+        description: "All listings of the item in the scan, bid-only included (as item_scan_stats.listings)."
+      - name: buyout_quantity
+        description: "Units on buyout listings; deals need this >= bundle."
+
+  - name: item_day_value
+    description: "market x UTC day x item_key: value = mean market_unit over the day's complete scans; listings/quantity = their max."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, unix_day, item_key]}}
+    columns:
+      - name: unix_day
+        data_tests: [not_null]
+      - name: value
+        data_tests: [not_null]
+
+  - name: item_reference
+    description: "market x item_key at the newest complete scan: ref_unit (normal price, weighted over the ref_window_days days before the current day) and bundle."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, item_key]}}
+    columns:
+      - name: item_key
+        data_tests: [not_null]
+      - name: bundle
+        data_tests:
+          - not_null
+          - accepted_values: {arguments: {values: [1, 5, 10, 20], quote: false}}
+
+  - name: market_index
+    description: "market x UTC day x group ('all' + dashboard_groups): chained Jevons index, 100 on the market's first day; null on days with < 5 eligible items, chaining on from the last non-null value."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, unix_day, group_id]}}
+    columns:
+      - name: group_id
+        data_tests: [not_null]
+      - name: day_at
+        data_tests: [not_null]
+
+  - name: dashboard_deals
+    description: "C4 v4 deals: top 50 per market by pct ascending, gain descending, item_key."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, item_key]}}
+      - unique_key: {arguments: {columns: [realm, faction, rank]}}
+
+  - name: dashboard_overpriced
+    description: "C4 v4 overpriced: top 50 per market by pct descending, gain descending, item_key."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, item_key]}}
+      - unique_key: {arguments: {columns: [realm, faction, rank]}}
+
+  - name: dashboard_extremes
+    description: "C4 v4 extremes: per market x window (7d, 30d) x side (low, high), top 25."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, window_id, side, item_key]}}
+      - unique_key: {arguments: {columns: [realm, faction, window_id, side, rank]}}
+    columns:
+      - name: window_id
+        data_tests:
+          - accepted_values: {arguments: {values: ['7d', '30d']}}
+      - name: side
+        data_tests:
+          - accepted_values: {arguments: {values: ['low', 'high']}}
+
+  - name: dashboard_valuable
+    description: "C4 v4 valuable: top 25 per market by current market_unit descending, item_key."
+    data_tests:
+      - unique_key: {arguments: {columns: [realm, faction, item_key]}}
+      - unique_key: {arguments: {columns: [realm, faction, rank]}}
+
+  - name: dashboard_params
+    description: "One row: the dashboard dbt vars, echoed as dashboard.json params."

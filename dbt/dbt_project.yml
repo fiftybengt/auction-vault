@@ -15,6 +15,15 @@ vars:
   landing_path: /Volumes/auction/raw/landing
   # movers: both ends of a comparison need at least this many listings.
   movers_min_listings: 3
+  # dashboard (C3 v3 / C4 v4). dashboard.json `params` echoes these exactly (gold.dashboard_params).
+  deal_pct: 30              # a deal is at least this % below the normal price
+  over_pct: 30              # overpriced is at least this % above the normal price
+  min_gain_copper: 10000    # deals/overpriced: |unit - ref| x bundle must reach this
+  index_min_listings: 5     # index: an item needs this many listings on both days
+  ref_min_days: 2           # normal price: at least this many prior days with a value
+  ref_window_days: 14       # normal price: look back this many days before the current day
+  ref_half_life_days: 2     # normal price: weight 0.5^(ageDays / half life)
+  breadth_flat_pct: 5       # breadth: |r - 1| within this % counts as flat
 
 models:
   auctionvault:
@@ -37,6 +46,8 @@ seeds:
       +column_types: {class_id: int, class_name: string}
     dbc_item_subclass:
       +column_types: {class_id: int, subclass_id: int, subclass_name: string, subclass_plural: string}
+    dashboard_groups:
+      +column_types: {class_name: string, subclass_name: string, group_id: string, group_label: string, group_order: int}
 
 data_tests:
   auctionvault:

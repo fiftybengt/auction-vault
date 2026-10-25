@@ -52,6 +52,9 @@ const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeS
 const shortDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 export const fullTime = (at: UnixSeconds) => dateTime.format(new Date(at * 1000))
 export const shortTime = (at: UnixSeconds) => shortDate.format(new Date(at * 1000))
+// Day-grain series (the market index) are labelled by UTC day, the day they are computed for.
+const utcDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })
+export const shortDay = (at: UnixSeconds) => utcDay.format(new Date(at * 1000))
 
 export const TIME_LEFT: Record<number, string> = { 1: '< 30m', 2: '30m–2h', 3: '2–12h', 4: '12–48h' }
 

@@ -72,6 +72,9 @@ gh run watch -R fiftybengt/auction-vault        # follow it live
 
 **Rule of thumb:** scan → `/reload` → `make publish`, at least once per play session. Trends need
 many complete scans, and movers need complete scans at least 1 day (and 7 days) apart.
+The Overview dashboard (`dashboard.json`) counts UTC days with a complete scan: the index and breadth
+need 2 days, deals and overpriced need 2 earlier days with a normal price (so the 3rd day), and the
+7d / 30d extremes need 4 / 15 days in their window. Until then those lists are legitimately empty.
 
 ---
 
@@ -115,6 +118,11 @@ scripts/with-databricks dbt/.venv/bin/python export/export_gold.py --out /tmp/av
 dbt/.venv/bin/python export/check_c4.py /tmp/av-export
 make site-dev          # site with generated sample data at localhost
 ```
+
+Build only part of the graph, e.g. the dashboard models and their tests (unit tests included):
+`dbt build --select dashboard_groups+ item_scan_value+ dashboard_params+`.
+Dashboard thresholds are dbt vars in `dbt/dbt_project.yml` (`deal_pct`, `over_pct`, ...);
+`dashboard.json` echoes them in `params`, and `check_c4.py` fails if the two disagree.
 
 ### Useful Databricks queries (SQL Editor)
 ```sql

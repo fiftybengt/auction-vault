@@ -1,217 +1,175 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useParams } from 'react-router'
-import { TimeChart, TipRow } from '../components/charts/TimeChart'
+import { ExtremeTable, PricedTable, ValuableTable } from '../components/dashboard/ItemTables'
+import { MarketIndex } from '../components/dashboard/MarketIndex'
+import { Panel, Segmented, Tabs } from '../components/dashboard/ui'
 import { Money } from '../components/Money'
-import { ItemLink } from '../components/Quality'
-import { RangePicker } from '../components/RangePicker'
-import { Card, Empty, Gate, NoCompleteScan, StatTile } from '../components/States'
-import { useMovers, useOverview } from '../lib/data'
-import { countCompact, formatInt, fullTime, pct, shortTime } from '../lib/format'
-import { completeOnly, inRange, type Range } from '../lib/series'
-import type { Mover, Movers, OverviewPoint, WindowId } from '../lib/types'
+import { Empty, Gate, NoCompleteScan } from '../components/States'
+import { useDashboard } from '../lib/data'
+import { ago, formatInt, fullTime } from '../lib/format'
+import { useNow } from '../lib/useNow'
+import type { Dashboard, ExtremeId } from '../lib/types'
 
+// The market dashboard, driven by dashboard.json (C4 v4) only. Every number here comes from
+// complete scans; partial scans never reach this file. `breadth` stays in the data and types but
+// is not shown.
 export default function Overview() {
   const { market = '' } = useParams()
-  const overview = useOverview(market)
-  const movers = useMovers(market)
-  const [range, setRange] = useState<Range>('30d')
-
+  const dash = useDashboard(market)
   return (
-    <div className="space-y-4">
-      <h1 className="sr-only">Market overview</h1>
-      <Gate r={overview} what="market overview">
-        {(o) => <MarketSize all={o.series} range={range} setRange={setRange} />}
-      </Gate>
-      <Gate r={movers} what="movers">
-        {(m) => <MoversSection movers={m} market={market} />}
+    <div className="space-y-3 tabular">
+      <h1 className="sr-only">Market dashboard</h1>
+      <Gate r={dash} what="market dashboard">
+        {(d) => <DashboardView d={d} market={market} />}
       </Gate>
     </div>
   )
 }
 
-function MarketSize({ all, range, setRange }: { all: OverviewPoint[]; range: Range; setRange: (r: Range) => void }) {
-  const series = useMemo(() => completeOnly(all), [all])
-  const last = series.at(-1)
-  const end = all.at(-1)?.at ?? 0
-  const shown = useMemo(() => inRange(series, range, end), [series, range, end])
-  const partials = useMemo(() => inRange(all, range, end).filter((p) => !p.complete), [all, range, end])
-  const xs = useMemo(() => shown.map((p) => p.at), [shown])
-  const lines = useMemo(() => [{ label: 'Listings', color: '--series-1', values: shown.map((p) => p.listings) }], [shown])
-
-  if (!last) {
-    const lastPartial = all.at(-1)
-    return (
-      <>
-        <NoCompleteScan what="Market size, prices and movers" />
-        {lastPartial && (
-          <Card title="Partial scans so far" subtitle="Not plotted: a partial scan misses part of the auction house">
-            <PartialList points={[...all].reverse()} />
-          </Card>
-        )}
-      </>
-    )
-  }
+function DashboardView({ d, market }: { d: Dashboard; market: string }) {
+  if (d.asOf == null) return <NoCompleteScan what="The market index, deals and price extremes" />
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Listings" sub="in the latest complete scan">
-          {formatInt(last.listings)}
-        </StatTile>
-        <StatTile label="Quantity" sub="items for sale">
-          {formatInt(last.quantity)}
-        </StatTile>
-        <StatTile label="Distinct items">{formatInt(last.items)}</StatTile>
-        <StatTile label="Known sellers" sub="most sellers are unknown">
-          {formatInt(last.sellers)}
-        </StatTile>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <RangePicker value={range} onChange={setRange} />
-      </div>
-      <Card title="Market size" subtitle="Listings per complete scan">
-        <TimeChart
-          xs={xs}
-          lines={lines}
-          yFormat={countCompact}
-          ariaLabel="Line chart of auction listings per complete scan"
-          tooltip={(i) => {
-            const p = shown[i]
-            if (!p) return null
-            return (
-              <>
-                <p className="mb-1 text-muted">{shortTime(p.at)}</p>
-                <TipRow color="--series-1" label="listings">
-                  {formatInt(p.listings)}
-                </TipRow>
-                <TipRow label="quantity">{formatInt(p.quantity)}</TipRow>
-                <TipRow label="items">{formatInt(p.items)}</TipRow>
-                <TipRow label="known sellers">{formatInt(p.sellers)}</TipRow>
-              </>
-            )
-          }}
-        />
-        {partials.length > 0 && (
-          <p className="mt-2 text-xs text-muted">
-            {partials.length} partial {partials.length === 1 ? 'scan' : 'scans'} in this range not plotted (coverage{' '}
-            {partials.map((p) => `${Math.round(p.coverage * 100)}%`).join(', ')}).
-          </p>
-        )}
-        <details className="mt-2 text-sm">
-          <summary className="cursor-pointer text-ink-2">Show as table</summary>
-          <div className="mt-2 max-h-72 overflow-auto">
-            <table className="w-full text-left text-xs tabular">
-              <thead className="sticky top-0 bg-surface text-ink-2">
-                <tr>
-                  <th className="py-1 pr-2 font-medium">Scan</th>
-                  <th className="py-1 pr-2 text-right font-medium">Listings</th>
-                  <th className="py-1 pr-2 text-right font-medium">Quantity</th>
-                  <th className="py-1 pr-2 text-right font-medium">Items</th>
-                  <th className="py-1 text-right font-medium">Sellers</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...shown].reverse().map((p) => (
-                  <tr key={p.at} className="border-t border-hairline">
-                    <td className="py-1 pr-2" title={fullTime(p.at)}>
-                      {shortTime(p.at)}
-                    </td>
-                    <td className="py-1 pr-2 text-right">{formatInt(p.listings)}</td>
-                    <td className="py-1 pr-2 text-right">{formatInt(p.quantity)}</td>
-                    <td className="py-1 pr-2 text-right">{formatInt(p.items)}</td>
-                    <td className="py-1 text-right">{formatInt(p.sellers)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </details>
-      </Card>
+      <StatusBar asOf={d.asOf} historyDays={d.historyDays} />
+      <MarketIndex d={d} />
+      <SignalsPanel d={d} market={market} />
+      <ExtremesPanel d={d} market={market} />
+      <Panel label="Most valuable on the AH" sub="Highest market value per unit in the current scan">
+        {d.valuable.length === 0 ? <Empty>Nothing listed with a buyout in the current scan.</Empty> : <ValuableTable rows={d.valuable} market={market} />}
+      </Panel>
     </>
   )
 }
 
-function PartialList({ points }: { points: OverviewPoint[] }) {
+const STALE_AFTER = 36 * 3600
+
+function StatusBar({ asOf, historyDays }: { asOf: number; historyDays: number }) {
+  const now = useNow()
+  const stale = now - asOf > STALE_AFTER
   return (
-    <ul className="divide-y divide-hairline text-sm">
-      {points.map((p) => (
-        <li key={p.at} className="flex items-center justify-between gap-3 py-1.5 tabular">
-          <span className="whitespace-nowrap" title={fullTime(p.at)}>{shortTime(p.at)}</span>
-          <span className="text-ink-2">
-            {Math.round(p.coverage * 100)}% coverage · {formatInt(p.listings)} listings
-          </span>
-        </li>
-      ))}
-    </ul>
+    <section
+      aria-label="Data freshness"
+      className="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-md border border-line bg-surface px-3 py-1.5 text-xs text-ink-2"
+    >
+      <span className="flex items-center gap-2">
+        <span aria-hidden="true" className={`inline-block size-2 rounded-full ${stale ? 'bg-warning' : 'bg-gain'}`} />
+        <span>
+          Last complete scan{' '}
+          <time dateTime={new Date(asOf * 1000).toISOString()} title={fullTime(asOf)} className="font-semibold text-ink">
+            {ago(asOf, now)}
+          </time>{' '}
+          · <strong className="font-semibold text-ink">{formatInt(historyDays)}</strong> {historyDays === 1 ? 'day' : 'days'} of history
+          {stale && <span className="font-semibold text-warning-ink"> · may be out of date</span>}
+        </span>
+      </span>
+      <span className="text-[11px] text-muted sm:ml-auto">Each scan sees the newest 55,000 auctions; an item missing from a scan may still be listed.</span>
+    </section>
   )
 }
 
-const WINDOW_LABEL: Record<WindowId, string> = { '1d': '24 hours', '7d': '7 days' }
+const DAY = 86400
 
-function MoversSection({ movers, market }: { movers: Movers; market: string }) {
-  const ids = (['1d', '7d'] as const).filter((w) => movers.windows[w])
-  const [pick, setPick] = useState<WindowId>('1d')
-  const id = ids.includes(pick) ? pick : ids[0]
-  const w = id ? movers.windows[id] : undefined
-  if (!id || !w)
-    return (
-      <Card title="Biggest movers">
-        <Empty>Movers need complete scans at least a day apart.</Empty>
-      </Card>
+/**
+ * "Needs scans on 2 earlier days — 1 so far", for anything built on the normal price. Counts only
+ * the UTC days with data in the reference window [today − refWindowDays, today − 1]; index.series
+ * has one point per day with data, so its `at`s give those days.
+ */
+function refShortfall(d: Dashboard): string | null {
+  if (d.asOf == null) return null
+  const today = Math.floor(d.asOf / DAY)
+  const from = today - d.params.refWindowDays
+  const days = new Set(d.index.series.map((p) => Math.floor(p.at / DAY)).filter((x) => x >= from && x <= today - 1))
+  const earlier = days.size
+  const need = d.params.refMinDays
+  if (earlier >= need) return null
+  return `Needs scans on ${need} earlier ${need === 1 ? 'day' : 'days'} to know the normal price — ${earlier} so far.`
+}
+
+type SignalTab = 'deal' | 'over'
+
+/** Deals now / Overpriced now, one card with tabs (like Gainers / Losers). */
+function SignalsPanel({ d, market }: { d: Dashboard; market: string }) {
+  const [tab, setTab] = useState<SignalTab>('deal')
+  const rows = tab === 'deal' ? d.deals : d.overpriced
+  const p = d.params
+  const sub =
+    tab === 'deal' ? (
+      <>
+        Cheapest units at least {p.dealPct}% under the normal price, saving at least <Money c={p.minGainCopper} /> per bundle. Normal = the
+        last {p.refWindowDays} days, recent days weighted more.
+      </>
+    ) : (
+      <>
+        Market value at least {p.overPct}% over the normal price and at least <Money c={p.minGainCopper} /> more per bundle. Good time to
+        sell, not to buy.
+      </>
     )
-  const sub = `Median unit price now vs ${shortTime(w.prevAt)} · at least ${movers.minListings} listings at both times`
+  const short = refShortfall(d)
   return (
-    <div className="space-y-3">
-      {ids.length > 1 && (
-        <div role="radiogroup" aria-label="Movers period" className="inline-flex rounded-lg border border-line bg-surface p-0.5 text-sm">
-          {ids.map((x) => (
-            <button
-              key={x}
-              type="button"
-              role="radio"
-              aria-checked={x === id}
-              onClick={() => setPick(x)}
-              className={`rounded-md px-3 py-1 ${x === id ? 'bg-surface-2 font-semibold text-ink' : 'text-ink-2 hover:bg-surface-2/60'}`}
-            >
-              {WINDOW_LABEL[x]}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <MoverList title={`Biggest risers, ${WINDOW_LABEL[id]}`} subtitle={sub} rows={w.up} market={market} />
-        <MoverList title={`Biggest fallers, ${WINDOW_LABEL[id]}`} subtitle={sub} rows={w.down} market={market} />
+    <Panel label="Price signals">
+      <Tabs
+        label="Price signals"
+        idBase="signals"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'deal', label: 'Deals now', count: d.deals.length },
+          { id: 'over', label: 'Overpriced now', count: d.overpriced.length },
+        ]}
+      />
+      <div id="signals-panel" role="tabpanel" aria-labelledby={`signals-tab-${tab}`}>
+        <p className="mt-2 mb-1 text-xs text-ink-2">{sub}</p>
+        {rows.length > 0 ? (
+          <PricedTable key={tab} rows={rows} market={market} kind={tab} />
+        ) : (
+          <Empty>{short ?? (tab === 'deal' ? 'No item is far enough under its normal price right now.' : 'No item is far enough over its normal price right now.')}</Empty>
+        )}
       </div>
-    </div>
+    </Panel>
   )
 }
 
-function MoverList({ title, subtitle, rows, market }: { title: string; subtitle: string; rows: Mover[]; market: string }) {
+const EXTREME_IDS: { id: ExtremeId; label: string }[] = [
+  { id: '7d', label: '7D' },
+  { id: '30d', label: '30D' },
+]
+
+type Side = 'low' | 'high'
+
+function ExtremesPanel({ d, market }: { d: Dashboard; market: string }) {
+  const [id, setId] = useState<ExtremeId>('7d')
+  const [side, setSide] = useState<Side>('low')
+  const w = d.extremes[id]
+  const short = w.haveDays < w.needDays
+  const shortMsg = `Needs ${w.needDays} days of scans in the last ${w.days} days (have ${w.haveDays}).`
+  const rows = side === 'low' ? w.low : w.high
   return (
-    <Card title={title} subtitle={subtitle}>
-      {rows.length === 0 ? (
-        <Empty>Nothing moved enough.</Empty>
-      ) : (
-        <ol className="divide-y divide-hairline">
-          {rows.map((m) => (
-            <li key={m.key} className="flex items-center gap-3 py-2 text-sm">
-              <div className="min-w-0 flex-1">
-                <div className="truncate">
-                  <ItemLink market={market} itemKey={m.key} name={m.name} quality={m.quality} />
-                </div>
-                <div className="text-xs text-muted">
-                  was <Money c={m.prev} /> · {formatInt(m.listings)} listed
-                </div>
-              </div>
-              <div className="text-right">
-                <Money c={m.median} />
-                <div className={`text-xs font-semibold tabular ${m.pct >= 0 ? 'text-up' : 'text-down'}`}>
-                  <span aria-hidden="true">{m.pct >= 0 ? '▲' : '▼'}</span> {pct(m.pct)}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
-    </Card>
+    <Panel
+      label={`Lowest and highest in ${w.days} days`}
+      actions={<Segmented label="Window" value={id} options={EXTREME_IDS} onChange={setId} />}
+    >
+      <Tabs
+        label="Lows or highs"
+        idBase="extremes"
+        value={side}
+        onChange={setSide}
+        tabs={[
+          { id: 'low', label: `${w.days}-day lows`, count: short ? undefined : w.low.length },
+          { id: 'high', label: `${w.days}-day highs`, count: short ? undefined : w.high.length },
+        ]}
+      />
+      <div id="extremes-panel" role="tabpanel" aria-labelledby={`extremes-tab-${side}`}>
+        <p className="mt-2 mb-1 text-xs text-ink-2">
+          Today's market value against the item's other days in the window. Items need a value on {w.needDays}+ days and 3+ listings today.
+        </p>
+        {short ? (
+          <Empty>{shortMsg}</Empty>
+        ) : rows.length === 0 ? (
+          <Empty>{side === 'low' ? `No item is at a ${w.days}-day low today.` : `No item is at a ${w.days}-day high today.`}</Empty>
+        ) : (
+          <ExtremeTable key={`${id}-${side}`} rows={rows} market={market} side={side} />
+        )}
+      </div>
+    </Panel>
   )
 }
