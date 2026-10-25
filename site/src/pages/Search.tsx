@@ -145,7 +145,7 @@ function SearchBody({ rows, market }: { rows: IndexRow[]; market: string }) {
             <li key={r.key} className="flex items-center gap-3 px-3 py-2 text-sm">
               <div className="min-w-0 flex-1">
                 <div className="truncate">
-                  <ItemLink market={market} itemKey={r.key} name={r.name} quality={r.quality} />
+                  <ItemLink market={market} itemKey={r.key} name={r.name} quality={r.quality} icon={r.icon} />
                 </div>
                 <div className="truncate text-xs text-muted">
                   {r.class}

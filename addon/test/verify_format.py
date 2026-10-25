@@ -13,8 +13,12 @@ import sys
 import time
 from pathlib import Path
 
+# Schema 2 appended `icon`. A 9-field entry (schema 1, or an item not seen since the upgrade)
+# means the icon is unknown, so both lengths are valid in the same file.
 ITEM_FIELDS = ["name", "quality", "item_level", "req_level", "item_type",
-               "sub_type", "stack_max", "vendor_sell", "equip_loc"]
+               "sub_type", "stack_max", "vendor_sell", "equip_loc", "icon"]
+ITEM_FIELD_COUNTS = (len(ITEM_FIELDS) - 1, len(ITEM_FIELDS))
+SCHEMAS = (1, 2)
 ROW_FIELDS = ["item_key", "stack_count", "min_bid", "buyout", "bid_amount",
               "time_left", "seller_idx"]
 
@@ -48,9 +52,13 @@ def read(path):
     meta = {k: _scalar(v) for k, v in
             re.findall(r'\["(\w+)"\] = (.+),', _block(text, "AUCTIONVAULT_META"))}
 
-    items = {key: dict(zip(ITEM_FIELDS, val.split("|")))
-             for key, val in re.findall(r'\["([^"]+)"\] = "([^"]*)"',
-                                        _block(text, "AUCTIONVAULT_ITEMS"))}
+    items = {}
+    for key, val in re.findall(r'\["([^"]+)"\] = "([^"]*)"',
+                               _block(text, "AUCTIONVAULT_ITEMS")):
+        parts = val.split("|")
+        item = dict(zip(ITEM_FIELDS, parts))
+        item["_fields"] = len(parts)
+        items[key] = item
 
     # Scans are array elements, so each record closes with `}, -- [n]`.
     scans = []
@@ -93,6 +101,15 @@ def main():
         print(("  ok   " if cond else "  FAIL ") + msg)
         if not cond:
             failures.append(msg)
+
+    print("items")
+    check(meta.get("schema") in SCHEMAS, f"schema {meta.get('schema')} is one of {SCHEMAS}")
+    check(all(i["_fields"] in ITEM_FIELD_COUNTS for i in items.values()),
+          f"every item entry has {ITEM_FIELD_COUNTS[0]} or {ITEM_FIELD_COUNTS[1]} fields")
+    icons = [i["icon"] for i in items.values() if "icon" in i]
+    check(all(re.fullmatch(r"[^\s/\\.A-Z|]+", ic) for ic in icons),
+          "every icon is a non-empty lowercase basename (no path, no extension)")
+    print(f"  note   {len(icons)} of {len(items)} items have an icon\n")
 
     for scan in scans:
         print(f"{scan['id']}  [{scan['mode']}/{scan['source']}]")

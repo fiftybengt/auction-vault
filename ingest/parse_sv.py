@@ -1,4 +1,4 @@
-"""SavedVariables (C1) -> landing Parquet (C2 v1).
+"""SavedVariables (C1 schema 1 or 2) -> landing Parquet (C2 v2).
 
     python -m ingest.parse_sv <AuctionVault.lua> <out_dir>
 
@@ -18,9 +18,12 @@ import pyarrow.parquet as pq
 from . import PARSER_VERSION
 from .svread import decode, read_text
 
-SUPPORTED_SCHEMA = 1
+# C1 schemas this parser reads. Schema 2 added the 10th item field, `icon`; a 9-field item
+# entry (icon unknown) is valid in either schema; a 10-field one only in schema 2.
+SUPPORTED_SCHEMAS = (1, 2)
+ITEM_FIELD_COUNTS = {1: (9,), 2: (9, 10)}
 
-# ------------------------------------------------------------------ C2 v1, defined once
+# ------------------------------------------------------------------ C2 v2, defined once
 
 SCANS_SCHEMA = pa.schema([
     ("scan_id", pa.string()),
@@ -65,6 +68,7 @@ ITEMS_SCHEMA = pa.schema([
     ("stack_max", pa.int16()),
     ("vendor_sell", pa.int64()),
     ("equip_loc", pa.string()),
+    ("icon", pa.string()),  # C2 v2: texture basename, null when unknown
 ])
 
 UPLOAD_SCHEMA = pa.schema([
@@ -184,14 +188,19 @@ def _int_or_none(s):
     return int(s) if s != "" else None
 
 
-def _parse_items(items):
+def _parse_items(items, schema):
+    allowed = ITEM_FIELD_COUNTS[schema]
+    expected = " or ".join(map(str, allowed))
     cols = {name: [] for name in ITEMS_SCHEMA.names}
     for key, raw in items.items():
         f = raw.split("|")
-        if len(f) != 9:
-            raise SVError(f"item {key}: {len(f)} fields, expected 9: {raw!r}")
+        if len(f) not in allowed:
+            raise SVError(f"item {key}: {len(f)} fields, expected {expected} "
+                          f"(schema {schema}): {raw!r}")
         item_id, suffix_id = _split_key(key, f"item {key}")
-        name, quality, ilvl, req, itype, isub, stack_max, vendor, equip = f
+        name, quality, ilvl, req, itype, isub, stack_max, vendor, equip = f[:9]
+        # Empty or missing icon means unknown -> null (unlike other strings, which stay "").
+        cols["icon"].append(f[9] if len(f) == 10 and f[9] != "" else None)
         try:
             vals = [_int_or_none(x) for x in (quality, ilvl, req, stack_max, vendor)]
         except ValueError:
@@ -211,9 +220,9 @@ def parse(text):
     meta, items, scans = read_text(text)
     warnings = []
 
-    if meta.get("schema") != SUPPORTED_SCHEMA:
+    if meta.get("schema") not in SUPPORTED_SCHEMAS or isinstance(meta.get("schema"), bool):
         raise SVError(f"AUCTIONVAULT_META.schema is {meta.get('schema')!r}, "
-                      f"this parser reads schema {SUPPORTED_SCHEMA}")
+                      f"this parser reads schemas {list(SUPPORTED_SCHEMAS)}")
     if not scans:
         raise SVError("no scans in the file")
 
@@ -241,7 +250,7 @@ def parse(text):
     listings_t = pa.Table.from_arrays(
         [pa.array(c, type=f.type) for c, f in zip(cols, LISTINGS_SCHEMA)],
         schema=LISTINGS_SCHEMA)
-    return Parsed(scans_t, listings_t, _parse_items(items), meta, summary, warnings)
+    return Parsed(scans_t, listings_t, _parse_items(items, meta["schema"]), meta, summary, warnings)
 
 
 def upload_table(upload_ts, sv_sha256, sv_bytes, meta):

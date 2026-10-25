@@ -6,7 +6,7 @@
 // Usage: npm run fixture                 normal market: 30 days, 4 complete scans/day, newest scan partial
 //        npm run fixture -- --no-complete  only partial scans exist yet (today's real situation)
 //
-// Shape follows docs/contracts.md C4 v2 exactly. Anything the contract leaves open is decided
+// Shape follows docs/contracts.md C4 v3 exactly. Anything the contract leaves open is decided
 // here and marked FIXTURE-CHOICE so it can be checked against the real export later.
 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -313,6 +313,80 @@ for (const [name, sub, price] of commonsExtra) {
   add(commonId++, 0, name, 1, 'Trade Goods', sub, price, 20, between(0.4, 8), 70, 0)
 }
 
+// ---------- icons (C4 v3) ----------
+// Real WotLK texture basenames for the real item ids above, checked against Wowhead's
+// tooltip data (nether.wowhead.com/wotlk/tooltip/item/<id>) when this was written.
+const REAL_ICONS = {
+  33447: 'inv_alchemy_elixir_05', 33448: 'inv_alchemy_elixir_02', 33470: 'inv_fabric_soulcloth',
+  33568: 'inv_misc_leatherscrap_15', 34052: 'inv_enchant_dreamshard_02', 34054: 'inv_misc_dust_infinite',
+  34055: 'inv_enchant_essencecosmicgreater', 34057: 'inv_enchant_abysscrystal', 34753: 'ability_hunter_pet_boar',
+  34758: 'inv_misc_food_66', 35622: 'inv_elemental_eternal_water', 35623: 'inv_elemental_eternal_air',
+  35624: 'inv_elemental_eternal_earth', 35625: 'inv_elemental_eternal_life', 35627: 'inv_elemental_eternal_shadow',
+  36860: 'inv_elemental_eternal_fire', 36901: 'inv_misc_herb_goldclover', 36903: 'inv_misc_herb_evergreenmoss',
+  36904: 'inv_misc_herb_tigerlily', 36905: 'inv_misc_herb_whispervine', 36906: 'inv_misc_herb_icethorn',
+  36907: 'inv_misc_herb_talandrasrose', 36908: 'inv_misc_herb_frostlotus', 36909: 'inv_ore_cobalt',
+  36910: 'inv_ore_platinum_01', 36912: 'inv_ore_saronite_01', 36913: 'inv_ingot_yoggthorite',
+  36916: 'inv_ingot_cobalt', 37602: 'inv_inscription_armorscroll02', 37663: 'inv_ingot_titansteel_blue',
+  37701: 'inv_elemental_crystal_earth', 37705: 'inv_elemental_crystal_water', 37921: 'inv_misc_herb_constrictorgrass',
+  38425: 'inv_misc_leatherscrap_19', 38682: 'inv_inscription_armorscroll01', 39151: 'inv_inscription_pigment_white',
+  39334: 'inv_inscription_pigment_grey', 39343: 'inv_inscription_pigment_azure', 39666: 'inv_potion_162',
+  40078: 'inv_potion_164', 40093: 'inv_alchemy_elixir_empty', 40211: 'inv_alchemy_elixir_04',
+  40212: 'inv_alchemy_elixir_01', 41119: 'inv_misc_enggizmos_32', 41163: 'inv_ingot_platinum',
+  41510: 'inv_fabric_frostweave_bolt', 41511: 'inv_fabric_frostweave_imbuedbolt', 41593: 'inv_fabric_ebonweave',
+  41594: 'inv_fabric_moonshroud', 41595: 'inv_fabric_spellweave', 41611: 'inv_belt_36',
+  41800: 'inv_misc_fish_60', 41806: 'inv_misc_fish_62', 41809: 'inv_misc_fish_51',
+  41813: 'inv_misc_fish_72', 42999: 'inv_misc_food_142_fish', 43001: 'inv_misc_food_85_stegadonbite',
+  43012: 'inv_misc_food_119_rhinomeat', 43013: 'inv_misc_food_120_sharkmeat', 43015: 'inv_misc_fish_52',
+  43102: 'spell_frost_frozencore', 43103: 'inv_inscription_pigment_verdant', 43109: 'inv_inscription_pigment_icy',
+  43126: 'inv_inscription_inkpurple01', 43127: 'inv_inscription_inkbluewhite01', 43466: 'inv_scroll_02',
+  44128: 'inv_misc_pelt_14', 44325: 'inv_potion_61', 44330: 'inv_alchemy_potion_06',
+  44957: 'inv_shoulder_61', 44986: 'inv_potion_10', 45087: 'inv_misc_runedorb_01',
+  46376: 'inv_alchemy_endlessflask_04', 46377: 'inv_alchemy_endlessflask_06', 46378: 'inv_alchemy_endlessflask_03',
+  46379: 'inv_alchemy_endlessflask_05', 47556: 'spell_holy_rune', 49908: 'spell_fire_felflamebreath',
+}
+// FIXTURE-CHOICE: synthetic ids (gems, glyphs, recipes, gear, junk, commons) get a plausible
+// real texture by kind, so the images exist on the CDN.
+const GEM_ICONS = {
+  Red: 'inv_jewelcrafting_gem_37', Yellow: 'inv_jewelcrafting_gem_38', Blue: 'inv_jewelcrafting_gem_42',
+  Orange: 'inv_jewelcrafting_gem_39', Purple: 'inv_jewelcrafting_gem_40', Green: 'inv_jewelcrafting_gem_41',
+}
+const GLYPH_ICONS = {
+  'Death Knight': 'inv_glyph_majordeathknight', Druid: 'inv_glyph_majordruid', Hunter: 'inv_glyph_majorhunter',
+  Mage: 'inv_glyph_majormage', Paladin: 'inv_glyph_majorpaladin', Priest: 'inv_glyph_majorpriest',
+  Rogue: 'inv_glyph_majorrogue', Shaman: 'inv_glyph_majorshaman', Warlock: 'inv_glyph_majorwarlock',
+  Warrior: 'inv_glyph_majorwarrior',
+}
+const SLOT_ICONS = {
+  INVTYPE_FEET: 'inv_boots_cloth_01', INVTYPE_WAIST: 'inv_belt_23', INVTYPE_HEAD: 'inv_helmet_25',
+  INVTYPE_HAND: 'inv_gauntlets_17', INVTYPE_SHOULDER: 'inv_shoulder_22', INVTYPE_WRIST: 'inv_bracer_07',
+  INVTYPE_FINGER: 'inv_jewelry_ring_43', INVTYPE_CLOAK: 'inv_misc_cape_18', INVTYPE_LEGS: 'inv_pants_leather_24',
+  INVTYPE_ROBE: 'inv_chest_cloth_43', INVTYPE_BAG: 'inv_misc_bag_enchantedmageweave',
+}
+const WEAPON_ICONS = {
+  'Two-Handed Swords': 'inv_sword_61', Staves: 'inv_staff_70', Daggers: 'inv_weapon_shortblade_61', Bows: 'inv_weapon_bow_31',
+  'One-Handed Maces': 'inv_mace_63', 'Two-Handed Maces': 'inv_mace_51', 'Two-Handed Axes': 'inv_axe_113',
+}
+function fixtureIcon(it) {
+  // FIXTURE-CHOICE: about 1 in 10 items have no icon yet (null), to exercise the placeholder.
+  // A hash of the key rather than rand(), so adding icons didn't change the generated prices.
+  // Potion of Speed always keeps its icon (it is the documented hover example).
+  const h = Math.imul(it.id ^ (it.suffix * 7919), 2654435761) >>> 0
+  if (it.id !== 40211 && h % 10 === 0) return null
+  if (REAL_ICONS[it.id]) return REAL_ICONS[it.id]
+  if (it.cls === 'Gem') return GEM_ICONS[it.sub] ?? GEM_ICONS[it.name.split(' ').at(-1)] ?? 'inv_jewelcrafting_gem_28'
+  if (it.cls === 'Glyph') return GLYPH_ICONS[it.sub] ?? 'inv_glyph_majormage'
+  if (it.cls === 'Recipe') return pickBy(it.id, ['inv_scroll_03', 'inv_scroll_04', 'inv_scroll_05', 'inv_scroll_06'])
+  if (it.cls === 'Weapon') return WEAPON_ICONS[it.sub] ?? 'inv_sword_61'
+  if (it.sub === 'Mount') return 'ability_mount_mammoth_white'
+  if (it.sub === 'Pet') return pickBy(it.id, ['inv_pet_babyblizzardbear', 'inv_misc_head_dragon_bronze'])
+  if (SLOT_ICONS[it.equipLoc]) return SLOT_ICONS[it.equipLoc]
+  if (it.sub === 'Junk') return pickBy(it.id, ['inv_misc_monsterfang_01', 'inv_misc_pelt_wolf_ruin_02', 'inv_misc_bone_09'])
+  if (it.sub === 'Meat' || it.sub === 'Cooking') return 'inv_misc_food_15'
+  return pickBy(it.id, ['inv_misc_ammo_arrow_01', 'inv_misc_key_14', 'inv_misc_bag_10'])
+}
+const pickBy = (n, a) => a[n % a.length]
+for (const it of items) it.icon = fixtureIcon(it)
+
 // ---------- scans ----------
 const nowSec = Math.floor(Date.now() / 1000)
 const DAY = 86400
@@ -500,11 +574,11 @@ write(join(MARKET_DIR, 'meta.json'), {
 
 write(join(MARKET_DIR, 'overview.json'), { series })
 
-const cols = ['key', 'id', 'name', 'quality', 'class', 'subclass', 'median', 'min', 'listings', 'lastSeenAt']
+const cols = ['key', 'id', 'name', 'quality', 'icon', 'class', 'subclass', 'median', 'min', 'listings', 'lastSeenAt']
 const rows = items.map((it) => {
   const cur = currentStats.get(it)
   const n = currentListings.get(it)?.length ?? 0
-  return [keyOf(it), it.id, it.name, it.quality, it.cls, it.sub, cur?.median ?? null, cur?.min ?? null, n, lastSeen.get(it) ?? null]
+  return [keyOf(it), it.id, it.name, it.quality, it.icon, it.cls, it.sub, cur?.median ?? null, cur?.min ?? null, n, lastSeen.get(it) ?? null]
 })
 write(join(MARKET_DIR, 'index.json'), { cols, rows })
 
@@ -522,7 +596,7 @@ for (const [name, span] of [['1d', DAY], ['7d', 7 * DAY]]) {
     const prev = history.get(it).find((p) => p.at === prevScan.at)
     if (!now || !prev || now.listings < MIN_LISTINGS || prev.listings < MIN_LISTINGS) continue
     const pct = Math.round(((now.median - prev.median) / prev.median) * 1000) / 10
-    rowsW.push({ key: keyOf(it), name: it.name, quality: it.quality, median: now.median, prev: prev.median, pct, listings: now.listings })
+    rowsW.push({ key: keyOf(it), name: it.name, quality: it.quality, icon: it.icon, median: now.median, prev: prev.median, pct, listings: now.listings })
   }
   rowsW.sort((a, b) => b.pct - a.pct)
   windows[name] = {
@@ -552,6 +626,7 @@ for (const it of items) {
       stackMax: it.stackMax,
       vendorSell: Math.round(it.quality === 0 ? it.price * 0.9 : it.price * 0.05),
       equipLoc: it.equipLoc,
+      icon: it.icon,
     },
     history: history.get(it),
     listings,
@@ -560,7 +635,7 @@ for (const it of items) {
     if (!l.seller) continue
     const s = sellerAgg.get(l.seller) ?? { listings: 0, items: new Map() }
     s.listings++
-    const e = s.items.get(key) ?? { key, name: it.name, quality: it.quality, count: 0, unit: null }
+    const e = s.items.get(key) ?? { key, name: it.name, quality: it.quality, icon: it.icon, count: 0, unit: null }
     e.count++
     if (l.unit !== null && (e.unit === null || l.unit < e.unit)) e.unit = l.unit
     s.items.set(key, e)

@@ -1,4 +1,4 @@
-"""Gold tables (C3) -> site JSON (C4 v2).
+"""Gold tables (C3) -> site JSON (C4 v3).
 
     scripts/with-databricks dbt/.venv/bin/python export/export_gold.py [--out site/public/data]
     dbt/.venv/bin/python export/export_gold.py --check-only <dir>     # shape check, no warehouse
@@ -26,7 +26,7 @@ from check_c4 import check  # noqa: E402
 CATALOG = "auction"
 WARN_BYTES = 500 * 1024
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "site" / "public" / "data"
-INDEX_COLS = ["key", "id", "name", "quality", "class", "subclass", "median", "min", "listings", "lastSeenAt"]
+INDEX_COLS = ["key", "id", "name", "quality", "icon", "class", "subclass", "median", "min", "listings", "lastSeenAt"]
 MOVERS_TOP = 10
 WINDOWS = ("1d", "7d")
 MIN_LISTINGS = 3  # must match the dbt var movers_min_listings (dbt/dbt_project.yml)
@@ -165,7 +165,7 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
             from {g('item_scan_stats')}
             where realm = :realm and faction = :faction and scan_id = :cur)
         select s.item_key, i.item_id, i.suffix_id, i.name, i.quality, i.item_level, i.req_level,
-               i.item_type, i.item_subtype, i.stack_max, i.vendor_sell, i.equip_loc,
+               i.item_type, i.item_subtype, i.stack_max, i.vendor_sell, i.equip_loc, i.icon,
                s.last_seen_at, n.median_unit, n.min_unit, coalesce(n.listings, 0) as listings
         from seen s
         left join {s('items')} i on i.item_key = s.item_key
@@ -175,10 +175,11 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
     def item_id(r):
         return r["item_id"] if r["item_id"] is not None else int(r["item_key"].split(":")[0])
 
-    rows = [[r["item_key"], item_id(r), r["name"], to_int(r["quality"]), r["item_type"],
+    rows = [[r["item_key"], item_id(r), r["name"], to_int(r["quality"]), r["icon"], r["item_type"],
              r["item_subtype"], money(r["median_unit"]), money(r["min_unit"]), r["listings"],
              r["last_seen_at"]] for r in items]
-    rows.sort(key=lambda x: (-x[8], x[2] or "", x[0]))
+    li = INDEX_COLS.index("listings")
+    rows.sort(key=lambda x: (-x[li], x[2] or "", x[0]))
     w.put(f"{slug}/index.json", {"cols": INDEX_COLS, "rows": rows})
 
     complete_n = sum(1 for r in mscans if r["complete"])
@@ -196,7 +197,7 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
 
     # movers
     mv = query(cur, f"""
-        select m.*, i.name, i.quality from {g('movers')} m
+        select m.*, i.name, i.quality, i.icon from {g('movers')} m
         left join {s('items')} i on i.item_key = m.item_key
         where m.realm = :realm and m.faction = :faction""", p)
     windows = {}
@@ -205,7 +206,7 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
         if prev_at is None:
             continue
         ranked = [{"key": r["item_key"], "name": r["name"], "quality": to_int(r["quality"]),
-                   "median": money(r["median_now"]), "prev": money(r[f"median_{win}"]),
+                   "icon": r["icon"], "median": money(r["median_now"]), "prev": money(r[f"median_{win}"]),
                    "pct": float(r[f"pct_{win}"]), "listings": r["listings_now"]}
                   for r in mv if r[f"pct_{win}"] is not None]
         up = sorted((x for x in ranked if x["pct"] > 0), key=lambda x: (-x["pct"], x["key"]))
@@ -230,7 +231,7 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
     names = {r["item_key"]: r for r in items}
     for r in query(cur, f"""
             select item_key, row_no, stack_count, min_bid, buyout, bid_amount, unit_buyout,
-                   time_left, seller, name, quality
+                   time_left, seller, name, quality, icon
             from {g('latest_listings')}
             where realm = :realm and faction = :faction
             order by item_key, unit_buyout asc nulls last, stack_count, row_no""", p):
@@ -244,7 +245,7 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
             sd["listings"] += 1
             e = sd["items"].setdefault(r["item_key"], {
                 "key": r["item_key"], "name": r["name"], "quality": to_int(r["quality"]),
-                "count": 0, "unit": None})
+                "icon": r["icon"], "count": 0, "unit": None})
             e["count"] += 1
             u = money(r["unit_buyout"])
             if u is not None and (e["unit"] is None or u < e["unit"]):
@@ -256,7 +257,8 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
                      "quality": to_int(r["quality"]), "itemLevel": to_int(r["item_level"]),
                      "reqLevel": to_int(r["req_level"]), "itemType": r["item_type"],
                      "itemSubtype": r["item_subtype"], "stackMax": to_int(r["stack_max"]),
-                     "vendorSell": money(r["vendor_sell"]), "equipLoc": r["equip_loc"]},
+                     "vendorSell": money(r["vendor_sell"]), "equipLoc": r["equip_loc"],
+                     "icon": r["icon"]},
             "history": history.get(key, []),
             "listings": listings.get(key, []),
         })
@@ -308,7 +310,7 @@ def main(argv=None):
             print(f"C4 violation: {e}", file=sys.stderr)
         print(f"{len(errors)} C4 violation(s)", file=sys.stderr)
         return 1
-    print("C4 v2 shape check: OK")
+    print("C4 v3 shape check: OK")
     return 0
 
 

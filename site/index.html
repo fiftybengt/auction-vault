@@ -13,6 +13,11 @@
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t
       } catch (e) {}
     </script>
+    <!-- Wowhead item tooltips on hover. It must never rewrite React-rendered links. -->
+    <script>
+      var whTooltips = { colorLinks: false, iconizeLinks: false, renameLinks: false }
+    </script>
+    <script src="https://wow.zamimg.com/js/tooltips.js" async></script>
   </head>
   <body>
     <div id="root"></div>

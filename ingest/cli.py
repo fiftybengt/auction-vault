@@ -52,7 +52,8 @@ def print_summary(parsed):
               f"{s['expected_total']:>8,} {str(s['complete']):>8} {s['sellers']:>7} "
               f"{s['nil_owners']:>7,}")
     print(f"  {'total':<30} {'':<20} {'':<24} {parsed.listings.num_rows:>7,}")
-    print(f"\n  {parsed.items.num_rows:,} items in the dimension; "
+    icons = parsed.items.num_rows - parsed.items.column("icon").null_count
+    print(f"\n  {parsed.items.num_rows:,} items in the dimension ({icons:,} with an icon); "
           f"schema {parsed.meta.get('schema')}, addon v{parsed.meta.get('addonVersion')}")
     unknown = sum(s["unknown_items"] for s in parsed.summary)
     if unknown:

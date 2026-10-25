@@ -90,8 +90,8 @@ SavedVariables are only written on `/reload` or logout — until then a scan liv
 
 ```lua
 AUCTIONVAULT_ITEMS = {
-  ["13071:0"] = "Plated Fist of Hakoo|3|63|58|Weapon|Fist Weapon|1|0|INVTYPE_WEAPONMAINHAND",
-  --             name|quality|itemLevel|reqLevel|itemType|subType|stackMax|vendorSell|equipLoc
+  ["13071:0"] = "Plated Fist of Hakoo|3|63|58|Weapon|Fist Weapon|1|0|INVTYPE_WEAPONMAINHAND|inv_gauntlets_04",
+  --             name|quality|itemLevel|reqLevel|itemType|subType|stackMax|vendorSell|equipLoc|icon
 }
 
 AUCTIONVAULT_SCANS = {
@@ -109,6 +109,13 @@ AUCTIONVAULT_SCANS = {
 ```
 
 Roughly **1.8 MB per scan** (38 bytes a listing), six scans retained by default.
+
+**Schema 2** added `icon`: the lowercase basename of the texture `GetAuctionItemInfo` returns
+(`Interface\Icons\INV_Potion_108` -> `inv_potion_108`). An entry with only 9 fields — written
+under schema 1, or an item with no texture — means "icon unknown". The addon appends the icon
+the first time a scan lists that item again (once per item per session, from a per-row table
+lookup, so the 55k-row Auctionator hook pass stays O(1) per row), and never replaces a known
+icon or writes an empty one. Readers must accept both 9 and 10 fields, as `verify_format.py` does.
 
 Two format choices worth knowing:
 
@@ -138,7 +145,7 @@ Two format choices worth knowing:
 ## Development
 
 ```sh
-make test      # syntax check + 98 assertions against a stubbed WoW API
+make test      # syntax check + 126 assertions against a stubbed WoW API
 make sample    # generate a realistic 48k-listing SavedVariables file and verify it parses
 make status    # parse whatever the live client has actually written
 ```

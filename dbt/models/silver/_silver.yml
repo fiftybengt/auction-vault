@@ -73,6 +73,10 @@ models:
         data_tests: [unique, not_null]
       - name: item_id
         data_tests: [not_null]
+      - name: icon
+        description: "C1 texture basename (e.g. inv_potion_108): the latest non-null icon across all uploads; null when unknown. Never a URL."
+        data_tests:
+          - matches_pattern: {arguments: {pattern: '^[a-z0-9_\\-]+$'}}
 
   - name: item_classes
     description: "ItemClass x ItemSubClass. display_name matches the subtype string GetItemInfo() returns."

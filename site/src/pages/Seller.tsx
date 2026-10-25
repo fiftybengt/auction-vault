@@ -26,7 +26,7 @@ export default function Seller() {
                 {s.items.map((it) => (
                   <tr key={it.key} className="border-t border-hairline">
                     <td className="py-1.5 pr-2">
-                      <ItemLink market={market} itemKey={it.key} name={it.name} quality={it.quality} />
+                      <ItemLink market={market} itemKey={it.key} name={it.name} quality={it.quality} icon={it.icon} />
                     </td>
                     <td className="py-1.5 pr-2 text-right">{formatInt(it.count)}</td>
                     <td className="py-1.5 text-right">

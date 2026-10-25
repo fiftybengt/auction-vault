@@ -1,16 +1,32 @@
 import { Link } from 'react-router'
 import { keyToFile } from '../lib/data'
-import { qualityName } from '../lib/format'
 import { qualityClass } from '../lib/quality'
+import { wowheadData } from '../lib/wowhead'
+import { ItemIcon } from './ItemIcon'
 
-export function ItemLink({ market, itemKey, name, quality }: { market: string; itemKey: string; name: string; quality: number }) {
+// No `title`: the Wowhead tooltip (index.html) shows on hover instead. Taps on touch screens
+// just follow the link to our item page.
+export function ItemLink({
+  market,
+  itemKey,
+  name,
+  quality,
+  icon,
+}: {
+  market: string
+  itemKey: string
+  name: string
+  quality: number
+  icon: string | null | undefined
+}) {
   return (
     <Link
       to={`/${market}/item/${keyToFile(itemKey)}`}
-      className={`${qualityClass(quality)} font-medium hover:underline focus-visible:underline`}
-      title={qualityName(quality)}
+      data-wowhead={wowheadData(itemKey)}
+      className={`${qualityClass(quality)} group inline-flex max-w-full items-center gap-1.5 align-middle font-medium`}
     >
-      {name}
+      <ItemIcon icon={icon} quality={quality} size="small" />
+      <span className="truncate group-hover:underline group-focus-visible:underline">{name}</span>
     </Link>
   )
 }
