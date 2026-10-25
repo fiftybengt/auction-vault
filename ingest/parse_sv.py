@@ -7,6 +7,7 @@ schemas below are the single in-code definition of contract C2.
 """
 
 import hashlib
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -22,6 +23,12 @@ from .svread import decode, read_text
 # entry (icon unknown) is valid in either schema; a 10-field one only in schema 2.
 SUPPORTED_SCHEMAS = (1, 2)
 ITEM_FIELD_COUNTS = {1: (9,), 2: (9, 10)}
+
+# C1 icon character set, shared by every stage. A 10th field that doesn't match (including an
+# empty one, which the addon never writes) is "no icon": null, counted, warned about, and never
+# a parse failure, because icons are cosmetic.
+ICON_RE = re.compile(r"[a-z0-9_&-]+")
+INVALID_ICON_EXAMPLES = 5  # offending item keys named in the warning
 
 # ------------------------------------------------------------------ C2 v2, defined once
 
@@ -109,6 +116,7 @@ class Parsed:
     meta: dict
     summary: list  # one dict per scan, for printing
     warnings: list
+    invalid_icons: list  # item keys whose icon broke the C1 character set (now null)
 
 
 def _split_key(key, where):
@@ -192,6 +200,7 @@ def _parse_items(items, schema):
     allowed = ITEM_FIELD_COUNTS[schema]
     expected = " or ".join(map(str, allowed))
     cols = {name: [] for name in ITEMS_SCHEMA.names}
+    invalid_icons = []
     for key, raw in items.items():
         f = raw.split("|")
         if len(f) not in allowed:
@@ -199,8 +208,13 @@ def _parse_items(items, schema):
                           f"(schema {schema}): {raw!r}")
         item_id, suffix_id = _split_key(key, f"item {key}")
         name, quality, ilvl, req, itype, isub, stack_max, vendor, equip = f[:9]
-        # Empty or missing icon means unknown -> null (unlike other strings, which stay "").
-        cols["icon"].append(f[9] if len(f) == 10 and f[9] != "" else None)
+        # A 9-field entry means unknown -> null (unlike other strings, which stay "").
+        # A 10th field outside the C1 character set is dropped to null and counted.
+        icon = f[9] if len(f) == 10 else None
+        if icon is not None and not ICON_RE.fullmatch(icon):
+            invalid_icons.append(key)
+            icon = None
+        cols["icon"].append(icon)
         try:
             vals = [_int_or_none(x) for x in (quality, ilvl, req, stack_max, vendor)]
         except ValueError:
@@ -212,7 +226,7 @@ def _parse_items(items, schema):
         for col, v in zip(("quality", "item_level", "req_level", "stack_max",
                            "vendor_sell"), vals):
             cols[col].append(v)
-    return pa.Table.from_pydict(cols, schema=ITEMS_SCHEMA)
+    return pa.Table.from_pydict(cols, schema=ITEMS_SCHEMA), invalid_icons
 
 
 def parse(text):
@@ -250,7 +264,13 @@ def parse(text):
     listings_t = pa.Table.from_arrays(
         [pa.array(c, type=f.type) for c, f in zip(cols, LISTINGS_SCHEMA)],
         schema=LISTINGS_SCHEMA)
-    return Parsed(scans_t, listings_t, _parse_items(items, meta["schema"]), meta, summary, warnings)
+    items_t, invalid_icons = _parse_items(items, meta["schema"])
+    if invalid_icons:
+        shown = ", ".join(invalid_icons[:INVALID_ICON_EXAMPLES])
+        more = "" if len(invalid_icons) <= INVALID_ICON_EXAMPLES else ", ..."
+        warnings.append(f"{len(invalid_icons)} invalid icons dropped (not ^[a-z0-9_&-]+$), "
+                        f"items: {shown}{more}")
+    return Parsed(scans_t, listings_t, items_t, meta, summary, warnings, invalid_icons)
 
 
 def upload_table(upload_ts, sv_sha256, sv_bytes, meta):

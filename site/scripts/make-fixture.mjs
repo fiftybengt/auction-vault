@@ -366,7 +366,11 @@ const WEAPON_ICONS = {
   'Two-Handed Swords': 'inv_sword_61', Staves: 'inv_staff_70', Daggers: 'inv_weapon_shortblade_61', Bows: 'inv_weapon_bow_31',
   'One-Handed Maces': 'inv_mace_63', 'Two-Handed Maces': 'inv_mace_51', 'Two-Handed Axes': 'inv_axe_113',
 }
+// FIXTURE-CHOICE: C1 icon names may contain `&` and `-` (^[a-z0-9_&-]+$). Two real textures
+// with those characters, so the site's URL encoding is exercised (`&` must become %26).
+const SPECIAL_ICONS = { 'Northern Spices': 'inv_misc_fork&knife', 'Fire Leaf': 'inv_misc_spineleaf-_01' }
 function fixtureIcon(it) {
+  if (SPECIAL_ICONS[it.name]) return SPECIAL_ICONS[it.name]
   // FIXTURE-CHOICE: about 1 in 10 items have no icon yet (null), to exercise the placeholder.
   // A hash of the key rather than rand(), so adding icons didn't change the generated prices.
   // Potion of Speed always keeps its icon (it is the documented hover example).

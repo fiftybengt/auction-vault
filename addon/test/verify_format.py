@@ -46,7 +46,15 @@ def _array(record, key):
     return re.findall(r'"(.*?)", -- \[\d+\]', m.group(1))
 
 
+# itemKey -> number of `|`-separated fields, as last seen by read().
+FIELD_COUNTS = {}
+
+# C1 icon character set, enforced at every stage.
+ICON_RE = re.compile(r"[a-z0-9_&-]+")
+
+
 def read(path):
+    FIELD_COUNTS.clear()
     text = Path(path).read_text(encoding="utf-8", errors="replace")
 
     meta = {k: _scalar(v) for k, v in
@@ -56,9 +64,10 @@ def read(path):
     for key, val in re.findall(r'\["([^"]+)"\] = "([^"]*)"',
                                _block(text, "AUCTIONVAULT_ITEMS")):
         parts = val.split("|")
-        item = dict(zip(ITEM_FIELDS, parts))
-        item["_fields"] = len(parts)
-        items[key] = item
+        # Field counts are kept out of the item dict: ingest/tests/test_svread.py compares
+        # item values against svread's, so a synthetic key here breaks that agreement test.
+        FIELD_COUNTS[key] = len(parts)
+        items[key] = dict(zip(ITEM_FIELDS, parts))
 
     # Scans are array elements, so each record closes with `}, -- [n]`.
     scans = []
@@ -104,11 +113,11 @@ def main():
 
     print("items")
     check(meta.get("schema") in SCHEMAS, f"schema {meta.get('schema')} is one of {SCHEMAS}")
-    check(all(i["_fields"] in ITEM_FIELD_COUNTS for i in items.values()),
+    check(all(n in ITEM_FIELD_COUNTS for n in FIELD_COUNTS.values()),
           f"every item entry has {ITEM_FIELD_COUNTS[0]} or {ITEM_FIELD_COUNTS[1]} fields")
     icons = [i["icon"] for i in items.values() if "icon" in i]
-    check(all(re.fullmatch(r"[^\s/\\.A-Z|]+", ic) for ic in icons),
-          "every icon is a non-empty lowercase basename (no path, no extension)")
+    check(all(ICON_RE.fullmatch(ic) for ic in icons),
+          "every icon matches the C1 character set ^[a-z0-9_&-]+$")
     print(f"  note   {len(icons)} of {len(items)} items have an icon\n")
 
     for scan in scans:

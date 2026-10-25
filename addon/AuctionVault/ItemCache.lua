@@ -14,8 +14,11 @@ the residual same-name/different-item cases. Auctionator falls back on the same 
 
 Icons (schema 2): the texture also gives us the item's icon for free, so a new entry is
 written with it as a 10th field. Entries written before schema 2 have only 9 fields, and are
-backfilled the first time a scan shows the item again. `settled` remembers which name+texture
-pairs have nothing left to learn, so the per-row fast path stays a couple of table lookups --
+backfilled the first time a scan shows the item again. The newest valid icon wins (C1): an
+icon stored under an older derivation rule (inv_misc_spineleaf_01, from before spaces became
+"-") is replaced the first time a scan shows the item, while an invalid or missing one never
+touches what is stored. `settled` remembers which name+texture pairs have been checked this
+session, so the per-row fast path stays three table lookups --
 the Auctionator hook reads ~55k rows in one synchronous pass, so anything per-row that
 rebuilt or scanned the entry string would show up as a hitch.
 ]]
@@ -59,30 +62,48 @@ local function ParseLink(link)
 end
 ItemCache.ParseLink = ParseLink
 
---[[ "Interface\Icons\INV_Potion_108" -> "inv_potion_108". The client hands back backslash
-     paths, but accept "/" too and drop any extension, so the value is a bare icon name the
-     site can map to an image without knowing how the client spells paths. Returns nil when
-     there is nothing usable, which means "icon unknown", never "icon is empty". ]]
+--[[ Icon name, by the C1 rule: basename after the last "\" or "/", strip one extension,
+     lowercase, every space -> "-", then accept only ^[a-z0-9_&-]+$. Returns nil when the
+     result is unusable, which means "icon unknown", never "icon is empty".
+
+     Spaces are kept as "-" rather than trimmed because that is how Wowhead's CDN names them:
+     3.3.5a ships "INV_Misc_SpineLeaf _01" and "inv_thanksgiving_sweetpotato " (trailing
+     space), served as inv_misc_spineleaf-_01 and inv_thanksgiving_sweetpotato-. Stripping
+     them gave 404s. "&" is real too (INV_Misc_Fork&Knife). Neither "&" nor "-" needs escaping
+     in the "|"-joined entry or in the SavedVariables string writer, so the set is safe to
+     store as-is. Anything else (quotes, "|", control or non-ASCII bytes) is dropped, and the
+     same set is enforced again at every later stage. ]]
+local ICON_OK = "^[a-z0-9_&%-]+$"
+local warned  = {} -- texture -> true, so a bad icon is reported once per session
+
 local function IconName(texture)
 	if type(texture) ~= "string" then return nil end
 	local base = match(texture, "([^/\\]+)$")
 	if not base then return nil end
-	base = gsub(base, "%.[^.]*$", "")
-	base = lower(gsub(base, "[|\"\n\r%s]", ""))
-	if base == "" then return nil end
-	return base
+	base = (gsub(base, "%.[^.]*$", ""))
+	base = (gsub(lower(base), " ", "-"))
+	if match(base, ICON_OK) then return base end
+	if base ~= "" and not warned[texture] then
+		warned[texture] = true
+		ns.Debug("icon dropped, outside [a-z0-9_&-]: %s", (gsub(texture, "|", "||")))
+	end
+	return nil
 end
 ItemCache.IconName = IconName
 
--- A 9-field entry (8 pipes) has no icon yet. Called once per name+texture per session.
-local function HasIcon(entry)
-	local _, pipes = gsub(entry, "|", "|")
-	return pipes >= 9
-end
-
+--[[ Newest valid icon wins (C1). `icon` is already IconName's output, so nil covers a
+     missing, empty and invalid texture alike, and none of those ever blank or replace a stored
+     icon. A 9-field entry (8 pipes) gains the icon; a 10-field one has it swapped when it
+     differs. Any other shape is left alone rather than guessed at. Called once per
+     name+texture per session, so the string work here never runs per row. ]]
 local function Backfill(key, entry, icon)
-	if icon and not HasIcon(entry) then
+	if not icon then return end
+	local _, pipes = gsub(entry, "|", "|")
+	if pipes == 8 then
 		AUCTIONVAULT_ITEMS[key] = entry .. "|" .. icon
+	elseif pipes == 9 then
+		local head, stored = match(entry, "^(.*|)([^|]*)$")
+		if stored ~= icon then AUCTIONVAULT_ITEMS[key] = head .. icon end
 	end
 end
 ItemCache.Backfill = Backfill
@@ -135,8 +156,8 @@ function ItemCache:Resolve(name, texture, index)
 		local entry = AUCTIONVAULT_ITEMS[key]
 		if entry ~= nil then
 			if not settled[ck] then
-				-- once per name+texture per session: a pre-schema-2 entry, or one the retry
-				-- queue filled in since
+				-- once per name+texture per session: a pre-schema-2 entry, an icon from an
+				-- older derivation rule, or one the retry queue filled in since
 				Backfill(key, entry, IconName(texture))
 				settled[ck] = true
 			end
@@ -163,7 +184,7 @@ function ItemCache:Resolve(name, texture, index)
 		settled[ck] = true
 	else
 		linkOf[key]  = link
-		iconOf[key]  = iconOf[key] or icon
+		iconOf[key]  = icon or iconOf[key] -- newest valid icon wins here too
 		pending[key] = 0
 		self:ScheduleRetry()
 	end

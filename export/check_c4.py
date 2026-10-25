@@ -13,7 +13,7 @@ from pathlib import Path
 
 INDEX_COLS = ["key", "id", "name", "quality", "icon", "class", "subclass", "median", "min", "listings", "lastSeenAt"]
 
-ICON_RE = re.compile(r"[a-z0-9_\-]+")
+ICON_RE = re.compile(r"[a-z0-9_&-]+")  # C1 icon character set ^[a-z0-9_&-]+$ (fullmatch)
 
 
 class Check:

@@ -51,6 +51,7 @@ function ItemBody({ data, market, current, lastSeenAt }: { data: ItemFile; marke
           <h1 className={`text-2xl font-bold break-words ${qualityClass(item.quality)}`}>
             <a href={wowheadUrl(item.key)} target="_blank" rel="noopener" data-wowhead={wowheadData(item.key)} className="hover:underline focus-visible:underline">
               {item.name}
+              <span className="sr-only"> (opens in a new tab)</span>
             </a>
           </h1>
           <p className="mt-0.5 text-sm text-ink-2">

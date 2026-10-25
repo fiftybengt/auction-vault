@@ -30,6 +30,7 @@ INDEX_COLS = ["key", "id", "name", "quality", "icon", "class", "subclass", "medi
 MOVERS_TOP = 10
 WINDOWS = ("1d", "7d")
 MIN_LISTINGS = 3  # must match the dbt var movers_min_listings (dbt/dbt_project.yml)
+ICON_RE = re.compile(r"[a-z0-9_&-]+")  # C1 icon character set, ^[a-z0-9_&-]+$ (fullmatch)
 
 
 # ------------------------------------------------------------------ warehouse
@@ -73,6 +74,20 @@ def money(v):
 
 def file_key(item_key):
     return item_key.replace(":", "_")
+
+
+# item_key -> rejected icon value; reported once per run, never fatal (icons are cosmetic, C1/C4)
+BAD_ICONS = {}
+
+
+def clean_icons(rows):
+    """Null every icon outside the C1 character set, in place. Returns rows."""
+    for r in rows:
+        v = r.get("icon")
+        if v is not None and not (isinstance(v, str) and ICON_RE.fullmatch(v)):
+            BAD_ICONS[r.get("item_key")] = v
+            r["icon"] = None
+    return rows
 
 
 def seller_filename_ok(name):
@@ -155,7 +170,7 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
          "items": r["items"], "sellers": r["sellers"]} for r in mscans]})
 
     # items seen in this market in any scan, with current values from the newest complete scan
-    items = query(cur, f"""
+    items = clean_icons(query(cur, f"""
         with seen as (
             select item_key, max(scan_at) as last_seen_at
             from {g('item_scan_stats')} where realm = :realm and faction = :faction
@@ -170,7 +185,7 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
         from seen s
         left join {s('items')} i on i.item_key = s.item_key
         left join now n on n.item_key = s.item_key
-        order by s.item_key""", {**p, "cur": cur_id})
+        order by s.item_key""", {**p, "cur": cur_id}))
 
     def item_id(r):
         return r["item_id"] if r["item_id"] is not None else int(r["item_key"].split(":")[0])
@@ -196,10 +211,10 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
     })
 
     # movers
-    mv = query(cur, f"""
+    mv = clean_icons(query(cur, f"""
         select m.*, i.name, i.quality, i.icon from {g('movers')} m
         left join {s('items')} i on i.item_key = m.item_key
-        where m.realm = :realm and m.faction = :faction""", p)
+        where m.realm = :realm and m.faction = :faction""", p))
     windows = {}
     for win in WINDOWS:
         prev_at = next((r[f"at_{win}"] for r in mv if r[f"at_{win}"] is not None), None)
@@ -229,12 +244,12 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
     listings = defaultdict(list)
     sellers = defaultdict(lambda: {"listings": 0, "items": {}})
     names = {r["item_key"]: r for r in items}
-    for r in query(cur, f"""
+    for r in clean_icons(query(cur, f"""
             select item_key, row_no, stack_count, min_bid, buyout, bid_amount, unit_buyout,
                    time_left, seller, name, quality, icon
             from {g('latest_listings')}
             where realm = :realm and faction = :faction
-            order by item_key, unit_buyout asc nulls last, stack_count, row_no""", p):
+            order by item_key, unit_buyout asc nulls last, stack_count, row_no""", p)):
         listings[r["item_key"]].append({
             "stack": r["stack_count"], "minBid": money(r["min_bid"]), "buyout": money(r["buyout"]),
             "unit": money(r["unit_buyout"]),
@@ -302,6 +317,9 @@ def main(argv=None):
             w, slugs = build(cur)
         changed = w.flush(out, slugs)
         print(f"{len(w.files)} files exported, {changed} changed")
+        print(f"icons nulled (outside {ICON_RE.pattern}): {len(BAD_ICONS)}")
+        for key, v in sorted(BAD_ICONS.items(), key=lambda kv: str(kv[0]))[:20]:
+            print(f"warning: icon {v!r} of item {key} is outside the C1 set; exported as null", file=sys.stderr)
 
     errors = check(out)
     report(out)

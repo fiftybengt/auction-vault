@@ -53,7 +53,8 @@ def print_summary(parsed):
               f"{s['nil_owners']:>7,}")
     print(f"  {'total':<30} {'':<20} {'':<24} {parsed.listings.num_rows:>7,}")
     icons = parsed.items.num_rows - parsed.items.column("icon").null_count
-    print(f"\n  {parsed.items.num_rows:,} items in the dimension ({icons:,} with an icon); "
+    print(f"\n  {parsed.items.num_rows:,} items in the dimension ({icons:,} with an icon, "
+          f"{len(parsed.invalid_icons):,} invalid icons dropped); "
           f"schema {parsed.meta.get('schema')}, addon v{parsed.meta.get('addonVersion')}")
     unknown = sum(s["unknown_items"] for s in parsed.summary)
     if unknown:

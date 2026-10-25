@@ -42,7 +42,7 @@ If there is nothing new, or you are asked about "the live site", review what is 
   - Realm/faction missing from a key.
 - **Export (`export/`):**
   - Output that is not deterministic (an unstable sort, timestamps).
-  - Drift from C4 v2 (field names, null vs 0, sort order, file names).
+  - Drift from C4 (currently v3) (field names, null vs 0, sort order, file names).
   - `minListings` out of sync with the dbt var `movers_min_listings`.
 - **Site (`site/`):**
   - Plotting `complete:false` points.

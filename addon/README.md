@@ -110,12 +110,20 @@ AUCTIONVAULT_SCANS = {
 
 Roughly **1.8 MB per scan** (38 bytes a listing), six scans retained by default.
 
-**Schema 2** added `icon`: the lowercase basename of the texture `GetAuctionItemInfo` returns
-(`Interface\Icons\INV_Potion_108` -> `inv_potion_108`). An entry with only 9 fields — written
-under schema 1, or an item with no texture — means "icon unknown". The addon appends the icon
-the first time a scan lists that item again (once per item per session, from a per-row table
-lookup, so the 55k-row Auctionator hook pass stays O(1) per row), and never replaces a known
-icon or writes an empty one. Readers must accept both 9 and 10 fields, as `verify_format.py` does.
+**Schema 2** added `icon`, derived from the texture `GetAuctionItemInfo` returns by the C1
+rule: basename after the last `\` or `/`, extension stripped, lowercased, every space turned
+into `-` (not trimmed), and kept only if it matches `^[a-z0-9_&-]+$`
+(`Interface\Icons\INV_Potion_108` -> `inv_potion_108`, `INV_Misc_SpineLeaf _01` ->
+`inv_misc_spineleaf-_01`, `INV_Misc_Fork&Knife` -> `inv_misc_fork&knife`). A name outside
+that set is dropped (with a `/av` debug-mode message) and treated as no icon. An entry with only 9 fields — written
+under schema 1, or an item with no texture — means "icon unknown". The newest valid icon
+wins: the first time a scan lists an item in a session, the addon appends the derived icon to
+a 9-field entry, or replaces a stored icon that differs (so names stored under an older rule,
+like `inv_misc_spineleaf_01`, correct themselves to `inv_misc_spineleaf-_01`). A missing,
+empty or invalid derivation never blanks or replaces a stored icon. The check runs once per
+item per session; settled rows cost three table lookups, so the 55k-row Auctionator hook
+pass stays O(1) per row. Readers must accept both 9 and 10 fields, as `verify_format.py` does, and `verify_format.py`
+checks every icon against the same set.
 
 Two format choices worth knowing:
 
@@ -145,7 +153,7 @@ Two format choices worth knowing:
 ## Development
 
 ```sh
-make test      # syntax check + 126 assertions against a stubbed WoW API
+make test      # syntax check + 145 assertions against a stubbed WoW API
 make sample    # generate a realistic 48k-listing SavedVariables file and verify it parses
 make status    # parse whatever the live client has actually written
 ```

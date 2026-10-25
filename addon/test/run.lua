@@ -600,6 +600,12 @@ do
 	equal(parse("not a link"), nil, "garbage link")
 end
 
+local function fieldsOf(entry)
+	local t = {}
+	for v in (entry .. "|"):gmatch("([^|]*)|") do t[#t + 1] = v end
+	return t
+end
+
 section("icon: texture path parsing")
 do
 	local ns = freshAddon()
@@ -616,10 +622,64 @@ do
 	equal(icon(134400), nil, "non-string texture")
 end
 
-local function fieldsOf(entry)
-	local t = {}
-	for v in (entry .. "|"):gmatch("([^|]*)|") do t[#t + 1] = v end
-	return t
+-- Regression (QA 2026-10-25, findings 3 and 7): real 3.3.5a texture names with "&" and with
+-- internal or trailing spaces. The old rule stripped the spaces (a Wowhead 404) and let any
+-- other character through, which a downstream dbt test then failed the whole build on.
+section("icon: C1 character set, real 3.3.5a names")
+do
+	local ns = freshAddon()
+	local icon = ns.ItemCache.IconName
+	equal(icon("Interface\\Icons\\INV_Potion_108"), "inv_potion_108", "INV_Potion_108")
+	equal(icon("INV_Helmet_100.tga"), "inv_helmet_100", ".tga extension stripped")
+	equal(icon("Interface\\Icons\\INV_Misc_SpineLeaf _01"), "inv_misc_spineleaf-_01",
+		"internal space becomes -")
+	equal(icon("Interface\\Icons\\INV_Misc_Fork&Knife"), "inv_misc_fork&knife", "& kept")
+	equal(icon("Interface\\Icons\\inv_thanksgiving_sweetpotato "), "inv_thanksgiving_sweetpotato-",
+		"trailing space becomes -, not trimmed")
+	equal(icon(" INV_Leading"), "-inv_leading", "leading space becomes -, not trimmed")
+	equal(icon("INV_Already-Dashed"), "inv_already-dashed", "literal - kept")
+	equal(icon("INV_Bad\"Quote"), nil, "double quote rejected")
+	equal(icon("INV_Bad'Quote"), nil, "single quote rejected")
+	equal(icon("INV_Bad|Pipe"), nil, "| rejected")
+	equal(icon("INV_Caf\195\169"), nil, "non-ASCII rejected")
+	equal(icon("INV_Tab\tName"), nil, "tab is not a space, rejected")
+	equal(icon("INV_Line\nBreak"), nil, "newline rejected")
+	equal(icon("Interface\\Icons\\.blp"), nil, "empty after stripping the extension")
+
+	-- end to end: an accepted "&"/"-" icon lands as field 10, a rejected one leaves the
+	-- entry 9-field (icon unknown), never an empty or unsafe 10th field
+	stub.reset()
+	stub.now = 1786800000
+	local items = buildAuctionHouse(200, 4, 1.0)
+	local tex = {
+		"Interface\\Icons\\INV_Misc_Fork&Knife",
+		"Interface\\Icons\\inv_thanksgiving_sweetpotato ",
+		"Interface\\Icons\\INV_Bad|Pipe",
+		"Interface\\Icons\\INV_Bad\"Quote",
+	}
+	for i, l in ipairs(stub.listings) do l.texture = tex[(i % 4) + 1] end
+	-- map each item to the texture its listings carry
+	local texOf = {}
+	for i, l in ipairs(stub.listings) do texOf[items[(i % 4) + 1].key] = tex[(i % 4) + 1] end
+	stub.loadAddon(ADDON_DIR)
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+	local want = {
+		[tex[1]] = "inv_misc_fork&knife",
+		[tex[2]] = "inv_thanksgiving_sweetpotato-",
+	}
+	local wrong = 0
+	for _, item in ipairs(items) do
+		local f = fieldsOf(AUCTIONVAULT_ITEMS[item.key])
+		local w = want[texOf[item.key]]
+		if w then
+			if #f ~= 10 or f[10] ~= w then wrong = wrong + 1 end
+		elseif #f ~= 9 then
+			wrong = wrong + 1
+		end
+	end
+	equal(wrong, 0, "accepted icons stored as field 10, rejected ones leave a 9-field entry")
+	equal(AUCTIONVAULT_SCANS[1].rowCount, 200, "rows with a rejected icon are still recorded")
 end
 
 section("icon: captured when an item is first seen")
@@ -709,7 +769,7 @@ do
 	equal(doubled, 0, "a later session leaves a 10-field entry alone")
 end
 
-section("icon: never replaced or blanked by a missing texture")
+section("icon: newest valid icon wins, a missing or invalid one never replaces it")
 do
 	stub.reset()
 	stub.now = 1786800000
@@ -728,17 +788,47 @@ do
 	stub.pump()
 
 	equal(AUCTIONVAULT_ITEMS[items[1].key], legacy, "9-field entry not padded with an empty icon")
-	equal(AUCTIONVAULT_ITEMS[items[2].key], known, "known icon not replaced by an empty one")
+	equal(AUCTIONVAULT_ITEMS[items[2].key], known, "known icon not replaced by a nil or empty one")
 	equal(#fieldsOf(AUCTIONVAULT_ITEMS[items[3].key]), 9, "new item with no texture is written 9-field")
 	equal(AUCTIONVAULT_SCANS[1].rowCount, 200, "rows with no texture are still recorded")
 
-	-- a different texture for an item that already has an icon does not overwrite it
+	-- an invalid texture (outside the C1 set) is no icon: it neither replaces nor backfills
+	for _, l in ipairs(stub.listings) do l.texture = "Interface\\Icons\\INV_Bad|Pipe" end
+	stub.now = stub.now + 600
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+	equal(AUCTIONVAULT_ITEMS[items[2].key], known, "known icon not replaced by an invalid one")
+	equal(AUCTIONVAULT_ITEMS[items[1].key], legacy, "9-field entry not backfilled with an invalid one")
+
+	-- a different valid texture replaces the stored icon, and backfills the 9-field entry
 	for _, l in ipairs(stub.listings) do l.texture = "Interface\\Icons\\INV_Other" end
 	stub.now = stub.now + 600
 	stub.fire("AUCTION_ITEM_LIST_UPDATE")
 	stub.pump()
-	equal(AUCTIONVAULT_ITEMS[items[2].key], known, "known icon kept when another texture shows up")
+	equal(AUCTIONVAULT_ITEMS[items[2].key], "Known|1|1|1|Misc|Junk|1|0||inv_other",
+		"a different valid texture replaces the stored icon, other fields untouched")
 	equal(AUCTIONVAULT_ITEMS[items[1].key], legacy .. "|inv_other", "the real texture backfills later")
+end
+
+-- Regression (QA 2026-10-25, nit 7): Wild Spineleaf was stored as inv_misc_spineleaf_01 by the
+-- rule that stripped spaces, which is a Wowhead 404. Under "newest valid icon wins" the next
+-- scan that lists it corrects the stored name.
+section("icon: an icon stored under the old rule corrects itself")
+do
+	stub.reset()
+	stub.now = 1786800000
+	local items = buildAuctionHouse(200, 4, 1.0)
+	for i, l in ipairs(stub.listings) do
+		if l.link == items[1].link then l.texture = "Interface\\Icons\\INV_Misc_SpineLeaf _01" end
+	end
+	local stale = "Wild Spineleaf|1|80|0|Miscellaneous|Reagent|20|1250||inv_misc_spineleaf_01"
+	_G.AUCTIONVAULT_ITEMS = { [items[1].key] = stale }
+	stub.loadAddon(ADDON_DIR)
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+	equal(AUCTIONVAULT_ITEMS[items[1].key],
+		"Wild Spineleaf|1|80|0|Miscellaneous|Reagent|20|1250||inv_misc_spineleaf-_01",
+		"inv_misc_spineleaf_01 becomes inv_misc_spineleaf-_01, other fields untouched")
 end
 
 section("icon: Auctionator hook, 55000 rows over a schema 1 dimension")

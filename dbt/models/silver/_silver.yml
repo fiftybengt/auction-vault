@@ -74,9 +74,11 @@ models:
       - name: item_id
         data_tests: [not_null]
       - name: icon
-        description: "C1 texture basename (e.g. inv_potion_108): the latest non-null icon across all uploads; null when unknown. Never a URL."
+        description: "C1 icon name (e.g. inv_potion_108, inv_misc_fork&knife): the latest icon across all uploads that matches the C1 character set ^[a-z0-9_&-]+$ (C3 v2); values outside the set are dropped before the pick. Null when unknown. Never a URL. Cosmetic, so its test only warns."
         data_tests:
-          - matches_pattern: {arguments: {pattern: '^[a-z0-9_\\-]+$'}}
+          - matches_pattern:
+              arguments: {pattern: '^[a-z0-9_&-]+$'}
+              config: {severity: warn}
 
   - name: item_classes
     description: "ItemClass x ItemSubClass. display_name matches the subtype string GetItemInfo() returns."

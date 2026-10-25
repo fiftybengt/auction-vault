@@ -18,8 +18,8 @@ export default function Seller() {
               <thead className="text-xs text-ink-2">
                 <tr>
                   <th className="py-1.5 pr-2 font-medium">Item</th>
-                  <th className="py-1.5 pr-2 text-right font-medium">Listings</th>
-                  <th className="py-1.5 text-right font-medium">Unit</th>
+                  <th className="py-1.5 pr-2 text-right font-medium whitespace-nowrap">Listings</th>
+                  <th className="py-1.5 text-right font-medium whitespace-nowrap">Unit</th>
                 </tr>
               </thead>
               <tbody>
@@ -28,8 +28,8 @@ export default function Seller() {
                     <td className="py-1.5 pr-2">
                       <ItemLink market={market} itemKey={it.key} name={it.name} quality={it.quality} icon={it.icon} />
                     </td>
-                    <td className="py-1.5 pr-2 text-right">{formatInt(it.count)}</td>
-                    <td className="py-1.5 text-right">
+                    <td className="py-1.5 pr-2 text-right whitespace-nowrap">{formatInt(it.count)}</td>
+                    <td className="py-1.5 text-right whitespace-nowrap">
                       <Money c={it.unit} />
                     </td>
                   </tr>
