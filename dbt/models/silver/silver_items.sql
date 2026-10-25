@@ -1,8 +1,17 @@
 {{ config(alias='items') }}
--- Every upload carries the whole item dimension; the latest upload wins.
+-- Every upload carries the whole item dimension; the latest upload wins, except for icon (C3 v2):
+-- that is the latest non-null icon across all uploads (pre-v2 uploads carry no icon).
+-- An icon outside the C1 character set ^[a-z0-9_&-]+$ counts as no icon, so it is dropped
+-- before the pick and a bad value in bronze can never shadow an older good one.
 with ranked as (
     select *, row_number() over (partition by item_key order by _source_dir desc) as _rank
     from {{ ref('bronze_items') }}
+),
+icons as (
+    select item_key, max_by(icon, _source_dir) as icon
+    from {{ ref('bronze_items') }}
+    where regexp_like(icon, '^[a-z0-9_&-]+$')
+    group by item_key
 ),
 class_lookup as (
     -- one (class_id, subclass_id) per (class name, subtype name); lowest id on a name clash
@@ -27,11 +36,14 @@ select
     i.stack_max,
     i.vendor_sell,
     nullif(i.equip_loc, '')    as equip_loc,
+    ic.icon,
     c.class_id,
     c.subclass_id,
     i._source_dir,
     i._ingested_at
 from ranked i
+left join icons ic
+  on ic.item_key = i.item_key
 left join class_lookup c
   on c.class_name = i.item_type
  and c.display_name = i.item_subtype

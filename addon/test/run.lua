@@ -217,10 +217,10 @@ do
 		n = n + 1
 		local fields = 0
 		for _ in (encoded .. "|"):gmatch("([^|]*)|") do fields = fields + 1 end
-		if fields ~= 9 then badFields = badFields + 1 end
+		if fields ~= 10 then badFields = badFields + 1 end
 	end
 	equal(n, 400, "one dimension row per distinct item")
-	equal(badFields, 0, "every dimension row has 9 pipe-separated fields")
+	equal(badFields, 0, "every dimension row has 10 pipe-separated fields (schema 2)")
 	equal(ns.ItemCache:PendingCount(), 0, "nothing left pending when the client has everything cached")
 end
 
@@ -598,6 +598,266 @@ do
 	equal(parse("item:2835:0:0:0:0:0:0:0:0"), "2835:0", "bare item string")
 	equal(parse(nil), nil, "nil link")
 	equal(parse("not a link"), nil, "garbage link")
+end
+
+local function fieldsOf(entry)
+	local t = {}
+	for v in (entry .. "|"):gmatch("([^|]*)|") do t[#t + 1] = v end
+	return t
+end
+
+section("icon: texture path parsing")
+do
+	local ns = freshAddon()
+	local icon = ns.ItemCache.IconName
+	equal(icon("Interface\\Icons\\INV_Potion_108"), "inv_potion_108", "backslash path")
+	equal(icon("Interface/Icons/INV_Potion_108"), "inv_potion_108", "forward-slash path")
+	equal(icon("Interface\\Icons\\INV_Misc_Gem_01.blp"), "inv_misc_gem_01", "extension stripped")
+	equal(icon("interface/icons\\Spell_Fire_Fire.BLP"), "spell_fire_fire", "mixed separators")
+	equal(icon("INV_Ore_Saronite_01"), "inv_ore_saronite_01", "bare name")
+	equal(icon(nil), nil, "nil texture")
+	equal(icon(""), nil, "empty texture")
+	equal(icon("Interface\\Icons\\"), nil, "path with no basename")
+	equal(icon(".blp"), nil, "extension only")
+	equal(icon(134400), nil, "non-string texture")
+end
+
+-- Regression (QA 2026-10-25, findings 3 and 7): real 3.3.5a texture names with "&" and with
+-- internal or trailing spaces. The old rule stripped the spaces (a Wowhead 404) and let any
+-- other character through, which a downstream dbt test then failed the whole build on.
+section("icon: C1 character set, real 3.3.5a names")
+do
+	local ns = freshAddon()
+	local icon = ns.ItemCache.IconName
+	equal(icon("Interface\\Icons\\INV_Potion_108"), "inv_potion_108", "INV_Potion_108")
+	equal(icon("INV_Helmet_100.tga"), "inv_helmet_100", ".tga extension stripped")
+	equal(icon("Interface\\Icons\\INV_Misc_SpineLeaf _01"), "inv_misc_spineleaf-_01",
+		"internal space becomes -")
+	equal(icon("Interface\\Icons\\INV_Misc_Fork&Knife"), "inv_misc_fork&knife", "& kept")
+	equal(icon("Interface\\Icons\\inv_thanksgiving_sweetpotato "), "inv_thanksgiving_sweetpotato-",
+		"trailing space becomes -, not trimmed")
+	equal(icon(" INV_Leading"), "-inv_leading", "leading space becomes -, not trimmed")
+	equal(icon("INV_Already-Dashed"), "inv_already-dashed", "literal - kept")
+	equal(icon("INV_Bad\"Quote"), nil, "double quote rejected")
+	equal(icon("INV_Bad'Quote"), nil, "single quote rejected")
+	equal(icon("INV_Bad|Pipe"), nil, "| rejected")
+	equal(icon("INV_Caf\195\169"), nil, "non-ASCII rejected")
+	equal(icon("INV_Tab\tName"), nil, "tab is not a space, rejected")
+	equal(icon("INV_Line\nBreak"), nil, "newline rejected")
+	equal(icon("Interface\\Icons\\.blp"), nil, "empty after stripping the extension")
+
+	-- end to end: an accepted "&"/"-" icon lands as field 10, a rejected one leaves the
+	-- entry 9-field (icon unknown), never an empty or unsafe 10th field
+	stub.reset()
+	stub.now = 1786800000
+	local items = buildAuctionHouse(200, 4, 1.0)
+	local tex = {
+		"Interface\\Icons\\INV_Misc_Fork&Knife",
+		"Interface\\Icons\\inv_thanksgiving_sweetpotato ",
+		"Interface\\Icons\\INV_Bad|Pipe",
+		"Interface\\Icons\\INV_Bad\"Quote",
+	}
+	for i, l in ipairs(stub.listings) do l.texture = tex[(i % 4) + 1] end
+	-- map each item to the texture its listings carry
+	local texOf = {}
+	for i, l in ipairs(stub.listings) do texOf[items[(i % 4) + 1].key] = tex[(i % 4) + 1] end
+	stub.loadAddon(ADDON_DIR)
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+	local want = {
+		[tex[1]] = "inv_misc_fork&knife",
+		[tex[2]] = "inv_thanksgiving_sweetpotato-",
+	}
+	local wrong = 0
+	for _, item in ipairs(items) do
+		local f = fieldsOf(AUCTIONVAULT_ITEMS[item.key])
+		local w = want[texOf[item.key]]
+		if w then
+			if #f ~= 10 or f[10] ~= w then wrong = wrong + 1 end
+		elseif #f ~= 9 then
+			wrong = wrong + 1
+		end
+	end
+	equal(wrong, 0, "accepted icons stored as field 10, rejected ones leave a 9-field entry")
+	equal(AUCTIONVAULT_SCANS[1].rowCount, 200, "rows with a rejected icon are still recorded")
+end
+
+section("icon: captured when an item is first seen")
+do
+	local ns = freshAddon()
+	local items = buildAuctionHouse(500, 40, 1.0)
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+
+	local wrong = 0
+	for i, item in ipairs(items) do
+		local f = fieldsOf(AUCTIONVAULT_ITEMS[item.key])
+		if #f ~= 10 or f[10] ~= ("icon_" .. (i % 40)) then wrong = wrong + 1 end
+	end
+	equal(wrong, 0, "every new entry carries the lowercase icon basename as field 10")
+	equal(AUCTIONVAULT_META.schema, 2, "META records schema 2")
+
+	-- an item the client only caches later still gets its icon from the retry queue
+	ns = freshAddon()
+	items = buildAuctionHouse(300, 30, 1.0)
+	for i = 1, 30, 3 do stub.itemCache[items[i].link] = nil end -- client has not cached these
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pumpFrames(60) -- a few retries, well inside the give-up window
+	check(ns.ItemCache:PendingCount() == 10, "uncached items wait on the retry queue (%d)",
+		ns.ItemCache:PendingCount())
+	for _, item in ipairs(items) do
+		stub.itemCache[item.link] = stub.itemCache[item.link] or {
+			name = item.name, quality = 1, ilvl = 1, reqLevel = 1, itemType = "Misc",
+			subType = "Junk", stackMax = 1, equipLoc = "",
+		}
+	end
+	stub.pump()
+	wrong = 0
+	for _, item in ipairs(items) do
+		local e = AUCTIONVAULT_ITEMS[item.key]
+		if not e or #fieldsOf(e) ~= 10 then wrong = wrong + 1 end
+	end
+	equal(wrong, 0, "items filled by the retry queue carry their icon too")
+end
+
+section("icon: backfilled on a pre-existing 9-field entry")
+do
+	stub.reset()
+	stub.now = 1786800000
+	local items = buildAuctionHouse(400, 20, 1.0)
+	local legacy = "Old Name|3|63|58|Weapon|Fist Weapon|1|0|INVTYPE_WEAPONMAINHAND"
+	-- what a schema 1 install already has on disk when the upgrade loads
+	_G.AUCTIONVAULT_ITEMS = {}
+	for _, item in ipairs(items) do AUCTIONVAULT_ITEMS[item.key] = legacy end
+	AUCTIONVAULT_ITEMS["99999:0"] = legacy -- an item no scan lists this session
+	local ns = stub.loadAddon(ADDON_DIR)
+
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+
+	local wrong = 0
+	for i, item in ipairs(items) do
+		if AUCTIONVAULT_ITEMS[item.key] ~= legacy .. "|icon_" .. (i % 40) then wrong = wrong + 1 end
+	end
+	equal(wrong, 0, "listed items gain the icon, other fields untouched")
+	equal(AUCTIONVAULT_ITEMS["99999:0"], legacy, "an item not seen this session stays 9-field")
+
+	-- a second scan in the same session must not append again
+	stub.now = stub.now + 600
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+	local doubled = 0
+	for _, item in ipairs(items) do
+		if #fieldsOf(AUCTIONVAULT_ITEMS[item.key]) ~= 10 then doubled = doubled + 1 end
+	end
+	equal(doubled, 0, "still exactly 10 fields after a second scan")
+
+	-- a fresh session (next /reload) must not append to an entry that already has one
+	local saved = {}
+	for k, v in pairs(AUCTIONVAULT_ITEMS) do saved[k] = v end
+	stub.reset()
+	stub.now = 1786900000
+	buildAuctionHouse(400, 20, 1.0)
+	_G.AUCTIONVAULT_ITEMS = saved
+	stub.loadAddon(ADDON_DIR)
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+	doubled = 0
+	for _, item in ipairs(items) do
+		if #fieldsOf(AUCTIONVAULT_ITEMS[item.key]) ~= 10 then doubled = doubled + 1 end
+	end
+	equal(doubled, 0, "a later session leaves a 10-field entry alone")
+end
+
+section("icon: newest valid icon wins, a missing or invalid one never replaces it")
+do
+	stub.reset()
+	stub.now = 1786800000
+	local items = buildAuctionHouse(200, 4, 1.0)
+	for i, l in ipairs(stub.listings) do
+		if i % 2 == 0 then l.texture = nil else l.texture = "" end
+	end
+	local legacy  = "Old|1|1|1|Misc|Junk|1|0|"
+	local known   = "Known|1|1|1|Misc|Junk|1|0||inv_known_01"
+	_G.AUCTIONVAULT_ITEMS = {
+		[items[1].key] = legacy,
+		[items[2].key] = known,
+	}
+	local ns = stub.loadAddon(ADDON_DIR)
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+
+	equal(AUCTIONVAULT_ITEMS[items[1].key], legacy, "9-field entry not padded with an empty icon")
+	equal(AUCTIONVAULT_ITEMS[items[2].key], known, "known icon not replaced by a nil or empty one")
+	equal(#fieldsOf(AUCTIONVAULT_ITEMS[items[3].key]), 9, "new item with no texture is written 9-field")
+	equal(AUCTIONVAULT_SCANS[1].rowCount, 200, "rows with no texture are still recorded")
+
+	-- an invalid texture (outside the C1 set) is no icon: it neither replaces nor backfills
+	for _, l in ipairs(stub.listings) do l.texture = "Interface\\Icons\\INV_Bad|Pipe" end
+	stub.now = stub.now + 600
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+	equal(AUCTIONVAULT_ITEMS[items[2].key], known, "known icon not replaced by an invalid one")
+	equal(AUCTIONVAULT_ITEMS[items[1].key], legacy, "9-field entry not backfilled with an invalid one")
+
+	-- a different valid texture replaces the stored icon, and backfills the 9-field entry
+	for _, l in ipairs(stub.listings) do l.texture = "Interface\\Icons\\INV_Other" end
+	stub.now = stub.now + 600
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+	equal(AUCTIONVAULT_ITEMS[items[2].key], "Known|1|1|1|Misc|Junk|1|0||inv_other",
+		"a different valid texture replaces the stored icon, other fields untouched")
+	equal(AUCTIONVAULT_ITEMS[items[1].key], legacy .. "|inv_other", "the real texture backfills later")
+end
+
+-- Regression (QA 2026-10-25, nit 7): Wild Spineleaf was stored as inv_misc_spineleaf_01 by the
+-- rule that stripped spaces, which is a Wowhead 404. Under "newest valid icon wins" the next
+-- scan that lists it corrects the stored name.
+section("icon: an icon stored under the old rule corrects itself")
+do
+	stub.reset()
+	stub.now = 1786800000
+	local items = buildAuctionHouse(200, 4, 1.0)
+	for i, l in ipairs(stub.listings) do
+		if l.link == items[1].link then l.texture = "Interface\\Icons\\INV_Misc_SpineLeaf _01" end
+	end
+	local stale = "Wild Spineleaf|1|80|0|Miscellaneous|Reagent|20|1250||inv_misc_spineleaf_01"
+	_G.AUCTIONVAULT_ITEMS = { [items[1].key] = stale }
+	stub.loadAddon(ADDON_DIR)
+	stub.fire("AUCTION_ITEM_LIST_UPDATE")
+	stub.pump()
+	equal(AUCTIONVAULT_ITEMS[items[1].key],
+		"Wild Spineleaf|1|80|0|Miscellaneous|Reagent|20|1250||inv_misc_spineleaf-_01",
+		"inv_misc_spineleaf_01 becomes inv_misc_spineleaf-_01, other fields untouched")
+end
+
+section("icon: Auctionator hook, 55000 rows over a schema 1 dimension")
+do
+	stub.reset()
+	stub.now = 1786800000
+	stub.installAuctionator(true)
+	local items = buildAuctionHouse(55000, 1500, 1.0)
+	_G.AUCTIONVAULT_ITEMS = {}
+	for i = 1, 1500, 2 do -- half the items already known from schema 1
+		AUCTIONVAULT_ITEMS[items[i].key] = "Old|1|1|1|Misc|Junk|1|0|"
+	end
+	local ns = stub.loadAddon(ADDON_DIR)
+
+	local started = os.clock()
+	Atr_FullScanAnalyze()
+	local ms = (os.clock() - started) * 1000
+	equal(#ns.Session:Current().rows, 55000, "every row read inside the hook")
+	stub.pump()
+
+	local rec = AUCTIONVAULT_SCANS[1]
+	equal(rec.rowCount, 55000, "full list stored")
+	equal(rec.complete, true, "marked complete")
+	local noIcon = 0
+	for _, item in ipairs(items) do
+		if #fieldsOf(AUCTIONVAULT_ITEMS[item.key]) ~= 10 then noIcon = noIcon + 1 end
+	end
+	equal(noIcon, 0, "every item has an icon after one hook pass (backfilled or new)")
+	print(format("  (hook pass: %.0f ms for 55000 rows on this machine)", ms))
 end
 
 ----------------------------------------------------------------------- summary

@@ -1,4 +1,4 @@
-"""Reader for the AuctionVault SavedVariables Lua subset (contract C1, schema 1).
+"""Reader for the AuctionVault SavedVariables Lua subset (contract C1, schemas 1 and 2).
 
 Lifted from addon/test/verify_format.py -- the reference reader -- and kept structurally
 identical so the two agree (tests/test_svread.py checks that on every file it sees). The
@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 ITEM_FIELDS = ["name", "quality", "item_level", "req_level", "item_type",
-               "sub_type", "stack_max", "vendor_sell", "equip_loc"]
+               "sub_type", "stack_max", "vendor_sell", "equip_loc", "icon"]  # icon: schema 2, optional
 ROW_FIELDS = ["item_key", "stack_count", "min_bid", "buyout", "bid_amount",
               "time_left", "seller_idx"]
 

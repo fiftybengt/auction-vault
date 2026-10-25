@@ -8,8 +8,11 @@ def _agree(reference, path):
     r_meta, r_items, r_scans = reference.read(path)
     meta, items, scans = svread.read(path)
     assert meta == r_meta
-    assert {k: v.split("|") for k, v in items.items()} == \
-        {k: list(v.values()) for k, v in r_items.items()}
+    # The reference may or may not know the schema-2 `icon` field yet (it zips onto its own
+    # field list), so compare the fields it does read.
+    assert items.keys() == r_items.keys()
+    for k, r in r_items.items():
+        assert items[k].split("|")[:len(r)] == list(r.values()), k
     assert len(scans) == len(r_scans)
     for s, r in zip(scans, r_scans):
         assert {k: v for k, v in s.items() if k != "rows"} == \
@@ -45,6 +48,12 @@ def test_empty_sellers_and_chunking():
     _, _, scans = svread.read_text(make_sv([scan(rows=rows, sellers=())], ITEMS))
     assert scans[0]["sellers"] == []
     assert len(scans[0]["rows"]) == 1201
+
+
+def test_schema2_items_read_raw():
+    from conftest import ITEMS_V2
+    meta, items, _ = svread.read_text(make_sv([scan()], ITEMS_V2, schema=2))
+    assert meta["schema"] == 2 and items == ITEMS_V2
 
 
 def test_crlf_file_like_the_live_client_writes(tmp_path):

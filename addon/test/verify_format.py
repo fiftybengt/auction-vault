@@ -13,8 +13,12 @@ import sys
 import time
 from pathlib import Path
 
+# Schema 2 appended `icon`. A 9-field entry (schema 1, or an item not seen since the upgrade)
+# means the icon is unknown, so both lengths are valid in the same file.
 ITEM_FIELDS = ["name", "quality", "item_level", "req_level", "item_type",
-               "sub_type", "stack_max", "vendor_sell", "equip_loc"]
+               "sub_type", "stack_max", "vendor_sell", "equip_loc", "icon"]
+ITEM_FIELD_COUNTS = (len(ITEM_FIELDS) - 1, len(ITEM_FIELDS))
+SCHEMAS = (1, 2)
 ROW_FIELDS = ["item_key", "stack_count", "min_bid", "buyout", "bid_amount",
               "time_left", "seller_idx"]
 
@@ -42,15 +46,28 @@ def _array(record, key):
     return re.findall(r'"(.*?)", -- \[\d+\]', m.group(1))
 
 
+# itemKey -> number of `|`-separated fields, as last seen by read().
+FIELD_COUNTS = {}
+
+# C1 icon character set, enforced at every stage.
+ICON_RE = re.compile(r"[a-z0-9_&-]+")
+
+
 def read(path):
+    FIELD_COUNTS.clear()
     text = Path(path).read_text(encoding="utf-8", errors="replace")
 
     meta = {k: _scalar(v) for k, v in
             re.findall(r'\["(\w+)"\] = (.+),', _block(text, "AUCTIONVAULT_META"))}
 
-    items = {key: dict(zip(ITEM_FIELDS, val.split("|")))
-             for key, val in re.findall(r'\["([^"]+)"\] = "([^"]*)"',
-                                        _block(text, "AUCTIONVAULT_ITEMS"))}
+    items = {}
+    for key, val in re.findall(r'\["([^"]+)"\] = "([^"]*)"',
+                               _block(text, "AUCTIONVAULT_ITEMS")):
+        parts = val.split("|")
+        # Field counts are kept out of the item dict: ingest/tests/test_svread.py compares
+        # item values against svread's, so a synthetic key here breaks that agreement test.
+        FIELD_COUNTS[key] = len(parts)
+        items[key] = dict(zip(ITEM_FIELDS, parts))
 
     # Scans are array elements, so each record closes with `}, -- [n]`.
     scans = []
@@ -93,6 +110,15 @@ def main():
         print(("  ok   " if cond else "  FAIL ") + msg)
         if not cond:
             failures.append(msg)
+
+    print("items")
+    check(meta.get("schema") in SCHEMAS, f"schema {meta.get('schema')} is one of {SCHEMAS}")
+    check(all(n in ITEM_FIELD_COUNTS for n in FIELD_COUNTS.values()),
+          f"every item entry has {ITEM_FIELD_COUNTS[0]} or {ITEM_FIELD_COUNTS[1]} fields")
+    icons = [i["icon"] for i in items.values() if "icon" in i]
+    check(all(ICON_RE.fullmatch(ic) for ic in icons),
+          "every icon matches the C1 character set ^[a-z0-9_&-]+$")
+    print(f"  note   {len(icons)} of {len(items)} items have an icon\n")
 
     for scan in scans:
         print(f"{scan['id']}  [{scan['mode']}/{scan['source']}]")

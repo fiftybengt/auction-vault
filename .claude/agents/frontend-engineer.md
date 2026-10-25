@@ -18,6 +18,7 @@ You build the public website where players check current auction house prices an
 - Item quality colours follow WoW (poor grey, common white, uncommon green, rare blue, epic purple, legendary orange). Text must stay readable in both light and dark themes.
 - Mobile-first: the item search and item page must work at 360px width.
 - No backend, no API keys, no trackers, no external fonts CDN (use Fontsource if you need a custom font).
+- **Approved third parties (decided 2026-10-25):** Wowhead's tooltip script (`https://wow.zamimg.com/js/tooltips.js`, configured with `whTooltips = { colorLinks: false, iconizeLinks: false, renameLinks: false }`) and the zamimg icon CDN (`wow.zamimg.com/images/wow/icons/<size>/<icon>.jpg`). Tooltips use `data-wowhead="item=<id>&domain=wotlk[&rand=<suffix>]"` on `<a>` elements only, since the script ignores anything that isn't a link. Add no other third-party scripts without asking.
 
 ## Pages (initial)
 1. **Overview**: market size over time, data freshness ("last scan 2h ago"), biggest movers up and down.

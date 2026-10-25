@@ -26,7 +26,7 @@ Conventions everywhere:
   and `DATABRICKS_HTTP_PATH`. In CI, the GitHub Actions secrets with the same names.
   Never write the token to a file, a log, a commit, or command output.
 
-## C1. SavedVariables (addon → ingest) — schema 1
+## C1. SavedVariables (addon → ingest) — schema 2
 
 Owner: `wow-addon-engineer`. The full description is in `addon/README.md` ("What lands on disk");
 `addon/test/verify_format.py` is the reference reader.
@@ -36,7 +36,28 @@ Owner: `wow-addon-engineer`. The full description is in `addon/README.md` ("What
   `sellers` (array), `rows` (array of `;`-joined strings, 500 rows each).
 - Row: `itemKey,stackCount,minBid,buyout,bidAmount,timeLeft,sellerIdx`.
   `sellerIdx` is 1-based into `sellers`, `0` = server sent no name. `timeLeft` is 1–4.
-- `AUCTIONVAULT_ITEMS[itemKey] = "name|quality|itemLevel|reqLevel|itemType|subType|stackMax|vendorSell|equipLoc"`.
+- `AUCTIONVAULT_ITEMS[itemKey] = "name|quality|itemLevel|reqLevel|itemType|subType|stackMax|vendorSell|equipLoc|icon"`.
+  - `icon` (added in schema 2) is derived from the auction row's texture, in this order:
+    take the basename after the last `\` or `/`, strip a file extension, lowercase it, and
+    turn every space into `-`. Examples:
+    - `Interface\Icons\INV_Potion_108` → `inv_potion_108`
+    - `INV_Helmet_100.tga` → `inv_helmet_100`
+    - `INV_Misc_SpineLeaf _01` → `inv_misc_spineleaf-_01`
+    - `INV_Misc_Fork&Knife` → `inv_misc_fork&knife`
+
+    These match the names Wowhead's icon CDN serves.
+  - **Icon character set (all stages):** `^[a-z0-9_&-]+$`. A derived name that doesn't
+    match is *no icon*. Icons are cosmetic, so a bad one is dropped with a warning at every
+    stage, and never fails a publish, a dbt build or an export.
+  - A 9-field entry (schema 1, or an item not seen since the upgrade) means the icon is unknown.
+    The addon backfills it the next time a scan lists the item.
+  - **The newest valid icon wins.** When a scan lists an item and the icon derived from its row
+    is valid and differs from the stored one, the addon replaces the stored icon. This lets
+    icons stored under an older derivation rule correct themselves, e.g. `inv_misc_spineleaf_01`
+    becomes `inv_misc_spineleaf-_01`. An invalid or missing derivation never blanks or replaces
+    a stored icon. Downstream, silver keeps the icon from the latest upload that has a valid
+    one, so a correction flows through on the next publish.
+  - Readers must accept both schema 1 and schema 2 files.
 - The file keeps only the newest `maxScans` (6) scans, so **every file must be archived before
   the next session overwrites it**.
 - The client writes **CRLF** line endings. Readers normalise them to LF. Archives and the landed
@@ -44,7 +65,7 @@ Owner: `wow-addon-engineer`. The full description is in `addon/README.md` ("What
 - Every scan before the 2026-10-24 harvest fix is `complete=false` (a prefix of about 6–13k of
   ~55k rows).
 
-## C2. Landing files (ingest → Databricks volume) — v1
+## C2. Landing files (ingest → Databricks volume) — v2
 
 Owner: `data-ingest-engineer`.
 
@@ -56,7 +77,7 @@ never modified after upload.
 |---|---|---|
 | `scans.parquet` | scan | `scan_id` str, `started_at` int64, `ended_at` int64, `realm` str, `faction` str, `player` str, `mode` str, `source` str, `row_count` int32, `expected_total` int32, `complete` bool, `nil_owners` int32, `unresolved` int32 |
 | `listings.parquet` | listing | `scan_id` str, `row_no` int32 (1-based, file order), `item_key` str, `item_id` int32, `suffix_id` int32, `stack_count` int32, `min_bid` int64, `buyout` int64, `bid_amount` int64, `time_left` int8, `seller` str (null when `sellerIdx` was 0) |
-| `items.parquet` | item_key | `item_key` str, `item_id` int32, `suffix_id` int32, `name` str, `quality` int8, `item_level` int16, `req_level` int16, `item_type` str, `item_subtype` str, `stack_max` int16, `vendor_sell` int64, `equip_loc` str |
+| `items.parquet` | item_key | `item_key` str, `item_id` int32, `suffix_id` int32, `name` str, `quality` int8, `item_level` int16, `req_level` int16, `item_type` str, `item_subtype` str, `stack_max` int16, `vendor_sell` int64, `equip_loc` str, `icon` str (nullable, v2; ingest nulls any value outside the C1 set) |
 | `upload.parquet` | 1 row | `upload_ts` str, `sv_sha256` str, `sv_bytes` int64, `schema` int32, `addon_version` str, `parser_version` str |
 
 `buyout = 0` means bid-only. It stays as 0 in landing and becomes null in silver.
@@ -71,7 +92,7 @@ never modified after upload.
 - `items.parquet` carries the file's whole item dimension on every upload. Silver keeps the
   latest upload.
 
-## C3. Warehouse (dbt) — v1
+## C3. Warehouse (dbt) — v2
 
 Owner: `dbt-analytics-engineer`. Catalog `auction`. Schemas `bronze`, `silver`, `gold`.
 
@@ -80,7 +101,7 @@ Owner: `dbt-analytics-engineer`. Catalog `auction`. Schemas `bronze`, `silver`, 
 - **silver**:
   - `scans`: deduplicated on `scan_id`, keeping the copy with the highest `row_count`.
   - `listings`: only rows from the kept copy. Adds `unit_buyout = buyout / stack_count` (null when bid-only) and `unit_min_bid`.
-  - `items`: latest upload wins.
+  - `items`: latest upload wins, except for `icon`, which is the latest **valid** icon across all uploads: one matching the C1 set `^[a-z0-9_&-]+$`. Invalid or null values are dropped before the pick, so they never shadow an older valid icon. Landing files from before v2 have no `icon` column.
   - `item_classes`: from the DBC seeds.
   - `sellers`.
 - **gold** (market key = `realm, faction`; trend tables use `complete` scans only):
@@ -106,7 +127,7 @@ C3 notes, as built:
 - Incremental silver and gold assume that a larger copy of a scan is a superset of the
   smaller one, with the same `row_no`s. That is how the addon's prefix copies behave.
 
-## C4. Site JSON (export → site) — v2
+## C4. Site JSON (export → site) — v3
 
 Owner: `dbt-analytics-engineer` writes it, `frontend-engineer` reads it.
 Location: `site/public/data/<realm>-<faction>/` (slugified, e.g. `icecrown-alliance`), plus
@@ -119,9 +140,11 @@ General rules:
 - `generatedAt` is the newest bronze `_ingested_at`, not the time the export ran, so an
   unchanged warehouse gives a byte-identical export.
 - Empty strings are `null`.
+- `icon` (v3) is the C1 icon name (character set `^[a-z0-9_&-]+$`), or `null` when unknown.
+  The export nulls any value outside that set. The site builds the image URL from it, so it is never a URL itself.
 - `index.json` and `itemCount` cover the items seen in that market in any scan, not the
-  whole item dimension. 118 KB gzipped today. Revisit at about 300 KB gzipped (split it,
-  or limit it to the last N days).
+  whole item dimension. About 292 KB gzipped on 2026-10-25 (no icons yet). Icons add about 30 KB,
+  which takes it past the 300 KB limit, so **splitting it is the next planned C4 change**.
 - "Current" means **the newest complete scan**. Where no complete scan exists yet, current
   values are `null` and `meta.lastCompleteScan` is `null`.
 
@@ -129,11 +152,11 @@ General rules:
 |---|---|
 | `markets.json` | `[{ slug, realm, faction, lastScanAt, lastCompleteScanAt, scans }]` |
 | `meta.json` | `{ generatedAt, lastScan: { id, at, rowCount, expectedTotal, complete }, lastCompleteScan: { id, at, rowCount } \| null, scanCount, completeScanCount, itemCount }` |
-| `index.json` | `{ cols: [...], rows: [[...]] }`, columnar: `key, id, name, quality, class, subclass, median, min, listings, lastSeenAt`. `median`/`min`/`listings` come from the current scan (`null`/`0` if the item isn't listed there). `lastSeenAt` is the newest scan of any kind that contains the item. `class`/`subclass` are the client's localized `itemType`/`itemSubtype` strings. |
+| `index.json` | `{ cols: [...], rows: [[...]] }`, columnar: `key, id, name, quality, icon, class, subclass, median, min, listings, lastSeenAt`. `median`/`min`/`listings` come from the current scan (`null`/`0` if the item isn't listed there). `lastSeenAt` is the newest scan of any kind that contains the item. `class`/`subclass` are the client's localized `itemType`/`itemSubtype` strings. |
 | `overview.json` | `{ series: [{ at, complete, coverage, listings, quantity, items, sellers }] }`. Includes partial scans, flagged. `coverage = rowCount / expectedTotal`. The site plots `complete` points only. |
-| `movers.json` | `{ minListings, windows: { "1d": { prevAt, up: [...], down: [...] }, "7d": {...} } }`. Each row is `{ key, name, quality, median, prev, pct, listings }`. A window whose `prevAt` would be missing is omitted. |
-| `items/<item_key>.json` | `{ item: { key, id, suffixId, name, quality, itemLevel, reqLevel, itemType, itemSubtype, stackMax, vendorSell, equipLoc }, history: [{ at, min, p25, median, p75, listings, quantity }], listings: [{ stack, minBid, buyout, unit, bid, timeLeft, seller }] }`. `history` is complete scans only. `listings` comes from the current scan, sorted by `unit` ascending, with nulls last. `buyout`/`unit` are `null` for bid-only listings. `bid` is `null` when nobody has bid. `seller` is `null` when unknown. |
-| `sellers/<seller>.json` | `{ seller, listings, items: [{ key, name, quality, count, unit }] }`. `unit` is that seller's lowest unit buyout. Comes from the current scan. Unknown (null) sellers get no file. |
+| `movers.json` | `{ minListings, windows: { "1d": { prevAt, up: [...], down: [...] }, "7d": {...} } }`. Each row is `{ key, name, quality, icon, median, prev, pct, listings }`. A window whose `prevAt` would be missing is omitted. |
+| `items/<item_key>.json` | `{ item: { key, id, suffixId, name, quality, itemLevel, reqLevel, itemType, itemSubtype, stackMax, vendorSell, equipLoc, icon }, history: [{ at, min, p25, median, p75, listings, quantity }], listings: [{ stack, minBid, buyout, unit, bid, timeLeft, seller }] }`. `history` is complete scans only. `listings` comes from the current scan, sorted by `unit` ascending, with nulls last. `buyout`/`unit` are `null` for bid-only listings. `bid` is `null` when nobody has bid. `seller` is `null` when unknown. |
+| `sellers/<seller>.json` | `{ seller, listings, items: [{ key, name, quality, icon, count, unit }] }`. `unit` is that seller's lowest unit buyout. Comes from the current scan. Unknown (null) sellers get no file. |
 
 File names:
 - `<item_key>` uses `_` in place of `:` (e.g. `13071_0.json`).

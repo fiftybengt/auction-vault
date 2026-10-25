@@ -68,3 +68,12 @@ ITEMS = {
     "2835:0": "Rough Stone|1|5|0|Trade Goods|Parts|20|2|",
     "36592:-36": 'Deforester "Axe" of the Sorcerer|2|158|74|Weapon|Two-Handed Axes|1|121784|INVTYPE_2HWEAPON',
 }
+
+# Schema 2: the same items with a 10th `icon` field, except one still in the 9-field
+# (icon unknown) shape and one with an explicitly empty icon.
+ITEMS_V2 = {
+    "13071:0": ITEMS["13071:0"] + "|inv_gauntlets_04",
+    "2835:0": ITEMS["2835:0"],
+    "36592:-36": ITEMS["36592:-36"] + "|",
+    "33470:0": "Frostweave Cloth|1|80|0|Trade Goods|Cloth|20|100||inv_fabric_frostweave",
+}

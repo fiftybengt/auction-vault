@@ -11,7 +11,7 @@ at full fidelity, including the fields Auctionator reads and throws away.
 local _, ns = ...
 
 ns.ADDON_VERSION  = "0.1.0"
-ns.SCHEMA_VERSION = 1
+ns.SCHEMA_VERSION = 2
 
 local AV = ns.AV -- created in Compat.lua; no external framework, see the note there
 

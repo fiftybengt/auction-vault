@@ -131,7 +131,7 @@ list '/Volumes/auction/raw/landing/';
   time, which is well inside them. If they are hit anyway, builds fail until the next day.
 - **SavedVariables keeps 6 scans.** Publishing after every session means nothing rotates out
   before it is archived.
-- **`index.json`** is about 118 KB gzipped. Split it at about 300 KB (see `docs/contracts.md`).
+- **`index.json`** is about 292 KB gzipped (2026-10-25) and grows with every new item seen. Splitting it is planned; the limit is about 300 KB (see `docs/contracts.md`).
 
 ---
 

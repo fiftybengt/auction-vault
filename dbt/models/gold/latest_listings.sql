@@ -9,6 +9,7 @@ select
     l.item_id,
     i.name,
     i.quality,
+    i.icon,
     l.stack_count,
     l.min_bid,
     l.buyout,

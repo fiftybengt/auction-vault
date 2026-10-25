@@ -196,7 +196,7 @@ function MoverList({ title, subtitle, rows, market }: { title: string; subtitle:
             <li key={m.key} className="flex items-center gap-3 py-2 text-sm">
               <div className="min-w-0 flex-1">
                 <div className="truncate">
-                  <ItemLink market={market} itemKey={m.key} name={m.name} quality={m.quality} />
+                  <ItemLink market={market} itemKey={m.key} name={m.name} quality={m.quality} icon={m.icon} />
                 </div>
                 <div className="text-xs text-muted">
                   was <Money c={m.prev} /> · {formatInt(m.listings)} listed

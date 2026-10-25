@@ -66,6 +66,12 @@ export function fileToKey(file: string): string {
   return file.replace('_', ':')
 }
 
+/** `40211:0` -> `{ id: 40211, suffix: 0 }`. Accepts the file form `40211_0` too. */
+export function parseItemKey(key: string): { id: number; suffix: number } {
+  const [id = '', suffix = '0'] = key.split(/[:_]/)
+  return { id: Number(id) || 0, suffix: Number(suffix) || 0 }
+}
+
 // index.json is columnar; decode it once per market.
 const decoded = new WeakMap<IndexFile, IndexRow[]>()
 export function decodeIndex(file: IndexFile): IndexRow[] {
@@ -77,6 +83,7 @@ export function decodeIndex(file: IndexFile): IndexRow[] {
     id: at('id'),
     name: at('name'),
     quality: at('quality'),
+    icon: at('icon'),
     class: at('class'),
     subclass: at('subclass'),
     median: at('median'),
@@ -90,6 +97,8 @@ export function decodeIndex(file: IndexFile): IndexRow[] {
       id: Number(r[c.id]),
       name: String(r[c.name] ?? ''),
       quality: Number(r[c.quality] ?? 1),
+      // C4 v3; a pre-v3 index has no icon column (indexOf -1 -> undefined -> null).
+      icon: r[c.icon] == null || r[c.icon] === '' ? null : String(r[c.icon]),
       class: String(r[c.class] ?? ''),
       subclass: String(r[c.subclass] ?? ''),
       median: r[c.median] == null ? null : Number(r[c.median]),

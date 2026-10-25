@@ -11,6 +11,16 @@ Why name+texture is a sound key: random-suffix greens already carry their suffix
 ("Rigid Leggings of the Eagle"), so name alone is nearly unique, and texture disambiguates
 the residual same-name/different-item cases. Auctionator falls back on the same signal
 (AuctionatorScan.lua:337) -- it just uses it to mangle the name instead of to find an ID.
+
+Icons (schema 2): the texture also gives us the item's icon for free, so a new entry is
+written with it as a 10th field. Entries written before schema 2 have only 9 fields, and are
+backfilled the first time a scan shows the item again. The newest valid icon wins (C1): an
+icon stored under an older derivation rule (inv_misc_spineleaf_01, from before spaces became
+"-") is replaced the first time a scan shows the item, while an invalid or missing one never
+touches what is stored. `settled` remembers which name+texture pairs have been checked this
+session, so the per-row fast path stays three table lookups --
+the Auctionator hook reads ~55k rows in one synchronous pass, so anything per-row that
+rebuilt or scanned the entry string would show up as a hitch.
 ]]
 
 local ADDON, ns = ...
@@ -19,12 +29,15 @@ local ItemCache = {}
 ns.ItemCache = ItemCache
 
 local concat, gmatch, tonumber, tostring = table.concat, string.gmatch, tonumber, tostring
+local gsub, lower, match, type = string.gsub, string.lower, string.match, type
 local SEP = "\031" -- unit separator; cannot appear in an item name or texture path
 
 local lookup   = {} -- "name\031texture" -> itemKey            (memory only)
 local linkOf   = {} -- itemKey -> itemLink, kept while pending (memory only)
 local pending  = {} -- itemKey -> retry count
 local giveUp   = {} -- itemKey -> true, client will not resolve it
+local iconOf   = {} -- itemKey -> icon, kept while pending     (memory only)
+local settled  = {} -- "name\031texture" -> true: entry exists, icon handled (memory only)
 
 function ItemCache:Init()
 	self.retryTimer = nil
@@ -49,6 +62,52 @@ local function ParseLink(link)
 end
 ItemCache.ParseLink = ParseLink
 
+--[[ Icon name, by the C1 rule: basename after the last "\" or "/", strip one extension,
+     lowercase, every space -> "-", then accept only ^[a-z0-9_&-]+$. Returns nil when the
+     result is unusable, which means "icon unknown", never "icon is empty".
+
+     Spaces are kept as "-" rather than trimmed because that is how Wowhead's CDN names them:
+     3.3.5a ships "INV_Misc_SpineLeaf _01" and "inv_thanksgiving_sweetpotato " (trailing
+     space), served as inv_misc_spineleaf-_01 and inv_thanksgiving_sweetpotato-. Stripping
+     them gave 404s. "&" is real too (INV_Misc_Fork&Knife). Neither "&" nor "-" needs escaping
+     in the "|"-joined entry or in the SavedVariables string writer, so the set is safe to
+     store as-is. Anything else (quotes, "|", control or non-ASCII bytes) is dropped, and the
+     same set is enforced again at every later stage. ]]
+local ICON_OK = "^[a-z0-9_&%-]+$"
+local warned  = {} -- texture -> true, so a bad icon is reported once per session
+
+local function IconName(texture)
+	if type(texture) ~= "string" then return nil end
+	local base = match(texture, "([^/\\]+)$")
+	if not base then return nil end
+	base = (gsub(base, "%.[^.]*$", ""))
+	base = (gsub(lower(base), " ", "-"))
+	if match(base, ICON_OK) then return base end
+	if base ~= "" and not warned[texture] then
+		warned[texture] = true
+		ns.Debug("icon dropped, outside [a-z0-9_&-]: %s", (gsub(texture, "|", "||")))
+	end
+	return nil
+end
+ItemCache.IconName = IconName
+
+--[[ Newest valid icon wins (C1). `icon` is already IconName's output, so nil covers a
+     missing, empty and invalid texture alike, and none of those ever blank or replace a stored
+     icon. A 9-field entry (8 pipes) gains the icon; a 10-field one has it swapped when it
+     differs. Any other shape is left alone rather than guessed at. Called once per
+     name+texture per session, so the string work here never runs per row. ]]
+local function Backfill(key, entry, icon)
+	if not icon then return end
+	local _, pipes = gsub(entry, "|", "|")
+	if pipes == 8 then
+		AUCTIONVAULT_ITEMS[key] = entry .. "|" .. icon
+	elseif pipes == 9 then
+		local head, stored = match(entry, "^(.*|)([^|]*)$")
+		if stored ~= icon then AUCTIONVAULT_ITEMS[key] = head .. icon end
+	end
+end
+ItemCache.Backfill = Backfill
+
 --[[ The item dimension is a pipe-joined string. Strip the field separator and anything the
      SavedVariables writer would escape, so the reader never has to un-escape either. In
      practice no 3.3.5a item name or type contains these; this just keeps that a fact rather
@@ -65,14 +124,14 @@ end
      vendor sell price (that return arrived in a later expansion). We read the 11th slot
      anyway so the format is forward-compatible, and store 0 when it is absent. Vendor prices
      can be joined from a TrinityCore item_template dump downstream if we ever want them. ]]
-function ItemCache:Fill(key, link)
+function ItemCache:Fill(key, link, icon)
 	if not link then return false end
 
 	local name, _, quality, itemLevel, reqLevel, itemType, itemSubType,
 	      stackMax, equipLoc, _, sellPrice = GetItemInfo(link)
 	if not name then return false end
 
-	AUCTIONVAULT_ITEMS[key] = concat({
+	local fields = {
 		clean(name),
 		tostring(quality or -1),
 		tostring(itemLevel or 0),
@@ -82,7 +141,10 @@ function ItemCache:Fill(key, link)
 		tostring(stackMax or 1),
 		tostring(sellPrice or 0),
 		clean(equipLoc),
-	}, "|")
+	}
+	-- No icon means a 9-field entry, which the contract reads as "unknown" and backfills.
+	if icon then fields[10] = icon end
+	AUCTIONVAULT_ITEMS[key] = concat(fields, "|")
 	return true
 end
 
@@ -90,8 +152,18 @@ function ItemCache:Resolve(name, texture, index)
 	local ck  = (name or "") .. SEP .. (texture or "")
 	local key = lookup[ck]
 
-	if key and (AUCTIONVAULT_ITEMS[key] ~= nil or pending[key] or giveUp[key]) then
-		return key -- fast path: nothing left to learn about this item
+	if key then
+		local entry = AUCTIONVAULT_ITEMS[key]
+		if entry ~= nil then
+			if not settled[ck] then
+				-- once per name+texture per session: a pre-schema-2 entry, an icon from an
+				-- older derivation rule, or one the retry queue filled in since
+				Backfill(key, entry, IconName(texture))
+				settled[ck] = true
+			end
+			return key -- fast path: nothing left to learn about this item
+		end
+		if pending[key] or giveUp[key] then return key end
 	end
 	-- Either a cache miss, or a known item whose dimension row is still missing (a
 	-- give-up that Requeue cleared). Both are worth one GetAuctionItemLink.
@@ -103,8 +175,16 @@ function ItemCache:Resolve(name, texture, index)
 	key        = parsed
 	lookup[ck] = key
 
-	if AUCTIONVAULT_ITEMS[key] == nil and not self:Fill(key, link) then
+	local icon  = IconName(texture)
+	local entry = AUCTIONVAULT_ITEMS[key]
+	if entry ~= nil then
+		Backfill(key, entry, icon)
+		settled[ck] = true
+	elseif self:Fill(key, link, icon) then
+		settled[ck] = true
+	else
 		linkOf[key]  = link
+		iconOf[key]  = icon or iconOf[key] -- newest valid icon wins here too
 		pending[key] = 0
 		self:ScheduleRetry()
 	end
@@ -123,12 +203,14 @@ function ItemCache:Drain()
 	local remaining  = 0
 
 	for key, tries in pairs(pending) do
-		if self:Fill(key, linkOf[key]) then
+		if self:Fill(key, linkOf[key], iconOf[key]) then
 			pending[key] = nil
 			linkOf[key]  = nil
+			iconOf[key]  = nil
 		elseif tries >= maxRetries then
 			pending[key] = nil
 			linkOf[key]  = nil
+			-- iconOf is kept: a Requeue'd retry still has the icon from this session
 			giveUp[key]  = true
 		else
 			pending[key] = tries + 1

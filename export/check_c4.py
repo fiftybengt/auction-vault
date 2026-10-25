@@ -1,4 +1,4 @@
-"""Shape check for the site JSON, contract C4 v2 (docs/contracts.md).
+"""Shape check for the site JSON, contract C4 v3 (docs/contracts.md).
 
     python export/check_c4.py <data_dir>
 
@@ -7,10 +7,13 @@ that money is integer copper or null (never a float, never a bool).
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
-INDEX_COLS = ["key", "id", "name", "quality", "class", "subclass", "median", "min", "listings", "lastSeenAt"]
+INDEX_COLS = ["key", "id", "name", "quality", "icon", "class", "subclass", "median", "min", "listings", "lastSeenAt"]
+
+ICON_RE = re.compile(r"[a-z0-9_&-]+")  # C1 icon character set ^[a-z0-9_&-]+$ (fullmatch)
 
 
 class Check:
@@ -46,6 +49,13 @@ class Check:
             return
         if not isinstance(v, str):
             self.err(where, f"expected string, got {v!r}")
+
+    def icon(self, where, v):
+        """C4 v3: the C1 texture basename (never a URL), or null when unknown."""
+        if v is None:
+            return
+        if not isinstance(v, str) or not ICON_RE.fullmatch(v):
+            self.err(where, f"expected icon basename matching {ICON_RE.pattern} or null, got {v!r}")
 
     def bool_(self, where, v):
         if not isinstance(v, bool):
@@ -111,11 +121,12 @@ def check_market(c, d, m):
             if not isinstance(r, list) or len(r) != len(INDEX_COLS):
                 c.err(at, "row length != cols")
                 continue
-            key, iid, name, quality, cls, sub, median, mn, listings, last_seen = r
+            key, iid, name, quality, icon, cls, sub, median, mn, listings, last_seen = r
             c.str_(at + ".key", key)
             c.int_(at + ".id", iid)
             c.str_(at + ".name", name, nullable=True)
             c.int_(at + ".quality", quality, nullable=True)
+            c.icon(at + ".icon", icon)
             c.str_(at + ".class", cls, nullable=True)
             c.str_(at + ".subclass", sub, nullable=True)
             c.int_(at + ".median", median, nullable=True)
@@ -160,10 +171,11 @@ def check_market(c, d, m):
                 for side in ("up", "down"):
                     for i, r in enumerate(c.list_(f"{at}.{side}", win[side])):
                         ra = f"{at}.{side}[{i}]"
-                        if c.keys(ra, r, ["key", "name", "quality", "median", "prev", "pct", "listings"]):
+                        if c.keys(ra, r, ["key", "name", "quality", "icon", "median", "prev", "pct", "listings"]):
                             c.str_(ra + ".key", r["key"])
                             c.str_(ra + ".name", r["name"], nullable=True)
                             c.int_(ra + ".quality", r["quality"], nullable=True)
+                            c.icon(ra + ".icon", r["icon"])
                             c.int_(ra + ".median", r["median"])
                             c.int_(ra + ".prev", r["prev"])
                             c.num(ra + ".pct", r["pct"])
@@ -184,7 +196,8 @@ def check_market(c, d, m):
             continue
         it = o["item"]
         if c.keys(at + ".item", it, ["key", "id", "suffixId", "name", "quality", "itemLevel", "reqLevel",
-                                      "itemType", "itemSubtype", "stackMax", "vendorSell", "equipLoc"]):
+                                      "itemType", "itemSubtype", "stackMax", "vendorSell", "equipLoc",
+                                      "icon"]):
             if it["key"].replace(":", "_") != p.stem:
                 c.err(at, "file name does not match item.key")
             c.int_(at + ".item.id", it["id"])
@@ -192,6 +205,7 @@ def check_market(c, d, m):
                 c.int_(f"{at}.item.{k}", it[k], nullable=True)
             for k in ("name", "itemType", "itemSubtype", "equipLoc"):
                 c.str_(f"{at}.item.{k}", it[k], nullable=True)
+            c.icon(at + ".item.icon", it["icon"])
         hist = c.list_(at + ".history", o["history"])
         for i, h in enumerate(hist):
             ha = f"{at}.history[{i}]"
@@ -238,16 +252,17 @@ def check_market(c, d, m):
         c.int_(at + ".listings", o["listings"])
         for i, e in enumerate(c.list_(at + ".items", o["items"])):
             ea = f"{at}.items[{i}]"
-            if c.keys(ea, e, ["key", "name", "quality", "count", "unit"]):
+            if c.keys(ea, e, ["key", "name", "quality", "icon", "count", "unit"]):
                 c.str_(ea + ".key", e["key"])
                 c.str_(ea + ".name", e["name"], nullable=True)
                 c.int_(ea + ".quality", e["quality"], nullable=True)
+                c.icon(ea + ".icon", e["icon"])
                 c.int_(ea + ".count", e["count"])
                 c.int_(ea + ".unit", e["unit"], nullable=True)
 
 
 def check(out):
-    """Return a list of C4 v2 violations under `out` (empty list = valid)."""
+    """Return a list of C4 v3 violations under `out` (empty list = valid)."""
     out = Path(out)
     c = Check()
     mk = load(c, out / "markets.json") if (out / "markets.json").exists() else None

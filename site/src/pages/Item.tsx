@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { TimeChart, TipRow } from '../components/charts/TimeChart'
+import { ItemIcon } from '../components/ItemIcon'
 import { Money } from '../components/Money'
 import { RangePicker } from '../components/RangePicker'
 import { Card, Empty, Gate, NoCompleteScan, StatTile } from '../components/States'
@@ -8,6 +9,7 @@ import { fileToKey, useIndex, useItem, useMeta } from '../lib/data'
 import { ago, countCompact, formatInt, fullTime, moneyCompact, qualityName, shortTime, TIME_LEFT } from '../lib/format'
 import { qualityClass } from '../lib/quality'
 import { inRange, type Range } from '../lib/series'
+import { wowheadData, wowheadUrl } from '../lib/wowhead'
 import type { HistoryPoint, ItemFile, Listing } from '../lib/types'
 
 export default function Item() {
@@ -40,14 +42,31 @@ function ItemBody({ data, market, current, lastSeenAt }: { data: ItemFile; marke
 
   return (
     <div className="space-y-4">
-      <header>
-        <h1 className={`text-2xl font-bold ${qualityClass(item.quality)}`}>{item.name}</h1>
-        <p className="mt-0.5 text-sm text-ink-2">
-          {qualityName(item.quality)} · {item.itemType}
-          {item.itemSubtype && item.itemSubtype !== item.itemType ? ` · ${item.itemSubtype}` : ''}
-          {item.itemLevel > 0 && ` · item level ${item.itemLevel}`}
-          {item.reqLevel > 0 && ` · requires level ${item.reqLevel}`}
-        </p>
+      <header className="flex items-start gap-3">
+        {/* Wowhead's tooltip only attaches to <a href>, so the icon and name link to Wowhead too. */}
+        <a href={wowheadUrl(item.key)} target="_blank" rel="noopener" data-wowhead={wowheadData(item.key)} tabIndex={-1} aria-hidden="true" className="shrink-0">
+          <ItemIcon icon={item.icon} quality={item.quality} size="large" />
+        </a>
+        <div className="min-w-0">
+          <h1 className={`text-2xl font-bold break-words ${qualityClass(item.quality)}`}>
+            <a href={wowheadUrl(item.key)} target="_blank" rel="noopener" data-wowhead={wowheadData(item.key)} className="hover:underline focus-visible:underline">
+              {item.name}
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          </h1>
+          <p className="mt-0.5 text-sm text-ink-2">
+            {qualityName(item.quality)} · {item.itemType}
+            {item.itemSubtype && item.itemSubtype !== item.itemType ? ` · ${item.itemSubtype}` : ''}
+            {item.itemLevel > 0 && ` · item level ${item.itemLevel}`}
+            {item.reqLevel > 0 && ` · requires level ${item.reqLevel}`}
+          </p>
+          <p className="mt-1 text-sm">
+            <a href={wowheadUrl(item.key)} target="_blank" rel="noopener" className="text-accent hover:underline">
+              View on Wowhead<span aria-hidden="true"> ↗</span>
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          </p>
+        </div>
       </header>
 
       {current === null ? (

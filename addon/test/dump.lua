@@ -44,6 +44,7 @@ for i = 1, NUM_ITEMS do
 	local link = format("|cff1eff00|Hitem:%d:0:0:0:0:0:%d:%d:80|h[%s]|h|r",
 	                    itemId, suffixId, random(0, 99999), name)
 
+	-- GetAuctionItemInfo returns the full texture path; the addon stores "inv_misc_<n>"
 	items[i] = { link = link, name = name, texture = "Interface\\Icons\\INV_Misc_" .. (i % 60) }
 
 	-- ~2% of items are not in the client's item cache, as happens after a fresh login
@@ -92,6 +93,14 @@ stub.listings = listings
 
 stub.now = os.time()
 stub.reset()
+-- An upgraded install: some schema 1 (9-field, no icon) entries are already on disk. Items the
+-- scan lists get their icon backfilled; the rest stay 9-field, so the sample exercises a
+-- reader against both shapes in one file.
+AUCTIONVAULT_ITEMS = {}
+for i = 1, 200 do
+	local itemId = 2000 + i * 7
+	AUCTIONVAULT_ITEMS[itemId .. ":0"] = "Legacy Item " .. i .. "|1|10|1|Trade Goods|Metal & Stone|20|0|"
+end
 stub.loadAddon(ADDON_DIR)
 stub.verbose = true
 

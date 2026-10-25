@@ -1,4 +1,4 @@
-// Shapes of the site JSON, contract C4 v2 in docs/contracts.md. Money is integer copper or null
+// Shapes of the site JSON, contract C4 v3 in docs/contracts.md. Money is integer copper or null
 // (never 0 for "none"), times are unix seconds UTC, series are ascending by `at` (scan startedAt).
 // "Current" means the newest complete scan; with none yet, current values are null.
 
@@ -33,6 +33,8 @@ export interface IndexRow {
   id: number
   name: string
   quality: number
+  /** Texture basename (e.g. `inv_alchemy_elixir_04`), null when unknown. Never a URL. */
+  icon: string | null
   class: string
   subclass: string
   median: Copper | null
@@ -60,6 +62,7 @@ export interface Mover {
   key: string
   name: string
   quality: number
+  icon: string | null
   median: Copper
   prev: Copper
   pct: number
@@ -93,6 +96,7 @@ export interface ItemInfo {
   stackMax: number
   vendorSell: Copper | null
   equipLoc: string
+  icon: string | null
 }
 
 export interface HistoryPoint {
@@ -125,5 +129,5 @@ export interface ItemFile {
 export interface SellerFile {
   seller: string
   listings: number
-  items: { key: string; name: string; quality: number; count: number; unit: Copper | null }[]
+  items: { key: string; name: string; quality: number; icon: string | null; count: number; unit: Copper | null }[]
 }

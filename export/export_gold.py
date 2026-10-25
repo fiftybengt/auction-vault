@@ -1,4 +1,4 @@
-"""Gold tables (C3) -> site JSON (C4 v2).
+"""Gold tables (C3) -> site JSON (C4 v3).
 
     scripts/with-databricks dbt/.venv/bin/python export/export_gold.py [--out site/public/data]
     dbt/.venv/bin/python export/export_gold.py --check-only <dir>     # shape check, no warehouse
@@ -26,10 +26,11 @@ from check_c4 import check  # noqa: E402
 CATALOG = "auction"
 WARN_BYTES = 500 * 1024
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "site" / "public" / "data"
-INDEX_COLS = ["key", "id", "name", "quality", "class", "subclass", "median", "min", "listings", "lastSeenAt"]
+INDEX_COLS = ["key", "id", "name", "quality", "icon", "class", "subclass", "median", "min", "listings", "lastSeenAt"]
 MOVERS_TOP = 10
 WINDOWS = ("1d", "7d")
 MIN_LISTINGS = 3  # must match the dbt var movers_min_listings (dbt/dbt_project.yml)
+ICON_RE = re.compile(r"[a-z0-9_&-]+")  # C1 icon character set, ^[a-z0-9_&-]+$ (fullmatch)
 
 
 # ------------------------------------------------------------------ warehouse
@@ -73,6 +74,20 @@ def money(v):
 
 def file_key(item_key):
     return item_key.replace(":", "_")
+
+
+# item_key -> rejected icon value; reported once per run, never fatal (icons are cosmetic, C1/C4)
+BAD_ICONS = {}
+
+
+def clean_icons(rows):
+    """Null every icon outside the C1 character set, in place. Returns rows."""
+    for r in rows:
+        v = r.get("icon")
+        if v is not None and not (isinstance(v, str) and ICON_RE.fullmatch(v)):
+            BAD_ICONS[r.get("item_key")] = v
+            r["icon"] = None
+    return rows
 
 
 def seller_filename_ok(name):
@@ -155,7 +170,7 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
          "items": r["items"], "sellers": r["sellers"]} for r in mscans]})
 
     # items seen in this market in any scan, with current values from the newest complete scan
-    items = query(cur, f"""
+    items = clean_icons(query(cur, f"""
         with seen as (
             select item_key, max(scan_at) as last_seen_at
             from {g('item_scan_stats')} where realm = :realm and faction = :faction
@@ -165,20 +180,21 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
             from {g('item_scan_stats')}
             where realm = :realm and faction = :faction and scan_id = :cur)
         select s.item_key, i.item_id, i.suffix_id, i.name, i.quality, i.item_level, i.req_level,
-               i.item_type, i.item_subtype, i.stack_max, i.vendor_sell, i.equip_loc,
+               i.item_type, i.item_subtype, i.stack_max, i.vendor_sell, i.equip_loc, i.icon,
                s.last_seen_at, n.median_unit, n.min_unit, coalesce(n.listings, 0) as listings
         from seen s
         left join {s('items')} i on i.item_key = s.item_key
         left join now n on n.item_key = s.item_key
-        order by s.item_key""", {**p, "cur": cur_id})
+        order by s.item_key""", {**p, "cur": cur_id}))
 
     def item_id(r):
         return r["item_id"] if r["item_id"] is not None else int(r["item_key"].split(":")[0])
 
-    rows = [[r["item_key"], item_id(r), r["name"], to_int(r["quality"]), r["item_type"],
+    rows = [[r["item_key"], item_id(r), r["name"], to_int(r["quality"]), r["icon"], r["item_type"],
              r["item_subtype"], money(r["median_unit"]), money(r["min_unit"]), r["listings"],
              r["last_seen_at"]] for r in items]
-    rows.sort(key=lambda x: (-x[8], x[2] or "", x[0]))
+    li = INDEX_COLS.index("listings")
+    rows.sort(key=lambda x: (-x[li], x[2] or "", x[0]))
     w.put(f"{slug}/index.json", {"cols": INDEX_COLS, "rows": rows})
 
     complete_n = sum(1 for r in mscans if r["complete"])
@@ -195,17 +211,17 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
     })
 
     # movers
-    mv = query(cur, f"""
-        select m.*, i.name, i.quality from {g('movers')} m
+    mv = clean_icons(query(cur, f"""
+        select m.*, i.name, i.quality, i.icon from {g('movers')} m
         left join {s('items')} i on i.item_key = m.item_key
-        where m.realm = :realm and m.faction = :faction""", p)
+        where m.realm = :realm and m.faction = :faction""", p))
     windows = {}
     for win in WINDOWS:
         prev_at = next((r[f"at_{win}"] for r in mv if r[f"at_{win}"] is not None), None)
         if prev_at is None:
             continue
         ranked = [{"key": r["item_key"], "name": r["name"], "quality": to_int(r["quality"]),
-                   "median": money(r["median_now"]), "prev": money(r[f"median_{win}"]),
+                   "icon": r["icon"], "median": money(r["median_now"]), "prev": money(r[f"median_{win}"]),
                    "pct": float(r[f"pct_{win}"]), "listings": r["listings_now"]}
                   for r in mv if r[f"pct_{win}"] is not None]
         up = sorted((x for x in ranked if x["pct"] > 0), key=lambda x: (-x["pct"], x["key"]))
@@ -228,12 +244,12 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
     listings = defaultdict(list)
     sellers = defaultdict(lambda: {"listings": 0, "items": {}})
     names = {r["item_key"]: r for r in items}
-    for r in query(cur, f"""
+    for r in clean_icons(query(cur, f"""
             select item_key, row_no, stack_count, min_bid, buyout, bid_amount, unit_buyout,
-                   time_left, seller, name, quality
+                   time_left, seller, name, quality, icon
             from {g('latest_listings')}
             where realm = :realm and faction = :faction
-            order by item_key, unit_buyout asc nulls last, stack_count, row_no""", p):
+            order by item_key, unit_buyout asc nulls last, stack_count, row_no""", p)):
         listings[r["item_key"]].append({
             "stack": r["stack_count"], "minBid": money(r["min_bid"]), "buyout": money(r["buyout"]),
             "unit": money(r["unit_buyout"]),
@@ -244,7 +260,7 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
             sd["listings"] += 1
             e = sd["items"].setdefault(r["item_key"], {
                 "key": r["item_key"], "name": r["name"], "quality": to_int(r["quality"]),
-                "count": 0, "unit": None})
+                "icon": r["icon"], "count": 0, "unit": None})
             e["count"] += 1
             u = money(r["unit_buyout"])
             if u is not None and (e["unit"] is None or u < e["unit"]):
@@ -256,7 +272,8 @@ def build_market(cur, w, slug, realm, faction, mscans, cur_scan, generated):
                      "quality": to_int(r["quality"]), "itemLevel": to_int(r["item_level"]),
                      "reqLevel": to_int(r["req_level"]), "itemType": r["item_type"],
                      "itemSubtype": r["item_subtype"], "stackMax": to_int(r["stack_max"]),
-                     "vendorSell": money(r["vendor_sell"]), "equipLoc": r["equip_loc"]},
+                     "vendorSell": money(r["vendor_sell"]), "equipLoc": r["equip_loc"],
+                     "icon": r["icon"]},
             "history": history.get(key, []),
             "listings": listings.get(key, []),
         })
@@ -300,6 +317,9 @@ def main(argv=None):
             w, slugs = build(cur)
         changed = w.flush(out, slugs)
         print(f"{len(w.files)} files exported, {changed} changed")
+        print(f"icons nulled (outside {ICON_RE.pattern}): {len(BAD_ICONS)}")
+        for key, v in sorted(BAD_ICONS.items(), key=lambda kv: str(kv[0]))[:20]:
+            print(f"warning: icon {v!r} of item {key} is outside the C1 set; exported as null", file=sys.stderr)
 
     errors = check(out)
     report(out)
@@ -308,7 +328,7 @@ def main(argv=None):
             print(f"C4 violation: {e}", file=sys.stderr)
         print(f"{len(errors)} C4 violation(s)", file=sys.stderr)
         return 1
-    print("C4 v2 shape check: OK")
+    print("C4 v3 shape check: OK")
     return 0
 
 
